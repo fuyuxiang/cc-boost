@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "fuyuxiang",
+  "description": "跨模型验证器门控的加固框架，让弱编码模型在 Claude Code 中达到接近强模型的质量。",
+  "owner": {
+    "name": "cc-boost contributors"
+  },
+  "plugins": [
+    {
+      "name": "cc-boost",
+      "source": "./",
+      "description": "验证器门控的编码加固框架。跨模型验证器 + Best-of-N + 自我演化的失败账本，提供商无关。",
+      "version": "0.1.0",
+      "category": "development-workflow",
+      "tags": ["harness", "verifier", "weak-model", "best-of-n"]
+    }
+  ]
+}
