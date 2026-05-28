@@ -35,19 +35,20 @@ fi
 # include untracked files (intent-to-add) so newly created files show up in
 # `git diff HEAD` as additions of every line. Restore the index afterwards
 # so we don't pollute the working tree's staging state.
-UNTRACKED="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
-if [[ -n "$UNTRACKED" ]]; then
-  # shellcheck disable=SC2086
-  git add -N -- $UNTRACKED 2>/dev/null || true
+UNTRACKED=()
+while IFS= read -r -d '' path; do
+  UNTRACKED+=("$path")
+done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
+if (( ${#UNTRACKED[@]} > 0 )); then
+  git add -N -- "${UNTRACKED[@]}" 2>/dev/null || true
 fi
 
 DIFF="$(git diff HEAD 2>/dev/null || true)"
 STAT="$(git diff HEAD --numstat 2>/dev/null || true)"
 
 # Restore index — drop the intent-to-add entries we just created.
-if [[ -n "$UNTRACKED" ]]; then
-  # shellcheck disable=SC2086
-  git reset -q -- $UNTRACKED 2>/dev/null || true
+if (( ${#UNTRACKED[@]} > 0 )); then
+  git reset -q -- "${UNTRACKED[@]}" 2>/dev/null || true
 fi
 
 if [[ -z "$DIFF" ]]; then

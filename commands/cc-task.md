@@ -91,8 +91,8 @@ rule degrades to "Layer A pass + smallest diff_lines". The run is still
 valid; just call this out in step 6 so the user knows verifier didn't
 contribute to the ranking.
 
-Exit code 2 means no acceptable winner (all candidates failed verifier OR
-all failed Layer A and verifier was skipped). In that case, do NOT call
+Exit code 2 means no acceptable winner (all candidates failed Layer A,
+failed verifier, or both). In that case, do NOT call
 apply — surface the ranking honestly so the user can decide. Show: each
 candidate's `verdict`, `layer_a_pass`, `diff_lines`, and the verifier's
 `reasoning` if present.

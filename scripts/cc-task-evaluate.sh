@@ -5,19 +5,18 @@
 # apply or clean — that's cc-task-apply.sh's job (separated for safety).
 #
 # Selection rule (in order):
-#   1. Exclude verdict==fail.
-#   2. Prefer layer_a_pass==true.
-#   3. Prefer verdict==pass over uncertain over skipped.
-#   4. Smallest diff_lines.
-#   5. Tie-break on verifier_score (highest).
+#   1. Exclude candidates that failed Layer A or verifier.
+#   2. Prefer verdict==pass over uncertain over skipped.
+#   3. Smallest diff_lines.
+#   4. Tie-break on verifier_score (highest).
 #
 # Usage:
 #   cc-task-evaluate.sh --run-id=<id> [--no-verifier]
 #
 # Exit codes:
 #   0 = success, ranking JSON on stdout, winner field set if any
-#   2 = no acceptable winner (all verdict==fail or all blocked); ranking still
-#       printed so the user can inspect
+#   2 = no acceptable winner (all failed Layer A, verifier, or both); ranking
+#       still printed so the user can inspect
 #   3 = internal error
 set -uo pipefail
 
@@ -76,31 +75,33 @@ for i in $(seq 0 $((CAND_COUNT - 1))); do
 
   # Diff vs base — include untracked the candidate may have created.
   DIFF_FILE="$RUN_DIR/cand-$N.diff.patch"
+  STAT_FILE="$RUN_DIR/cand-$N.numstat"
   (
     cd "$WT" || exit 0
-    UNTRACKED="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
-    if [[ -n "$UNTRACKED" ]]; then
-      # shellcheck disable=SC2086
-      git add -N -- $UNTRACKED 2>/dev/null || true
+    UNTRACKED=()
+    while IFS= read -r -d '' path; do
+      UNTRACKED+=("$path")
+    done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
+    if (( ${#UNTRACKED[@]} > 0 )); then
+      git add -N -- "${UNTRACKED[@]}" 2>/dev/null || true
     fi
     git diff "$BASE_SHA" > "$DIFF_FILE" 2>/dev/null || true
-    if [[ -n "$UNTRACKED" ]]; then
-      # shellcheck disable=SC2086
-      git reset -q -- $UNTRACKED 2>/dev/null || true
+    git diff "$BASE_SHA" --numstat > "$STAT_FILE" 2>/dev/null || true
+    if (( ${#UNTRACKED[@]} > 0 )); then
+      git reset -q -- "${UNTRACKED[@]}" 2>/dev/null || true
     fi
   )
 
   # Diff stats.
   DIFF_FILES=0; DIFF_LINES=0
-  if [[ -s "$DIFF_FILE" ]]; then
-    STAT="$(cd "$WT" && git diff "$BASE_SHA" --numstat 2>/dev/null || true)"
+  if [[ -s "$STAT_FILE" ]]; then
     while IFS=$'\t' read -r added removed _; do
       [[ -z "$added" ]] && continue
       DIFF_FILES=$((DIFF_FILES + 1))
       [[ "$added"   == "-" ]] && added=0
       [[ "$removed" == "-" ]] && removed=0
       DIFF_LINES=$((DIFF_LINES + added + removed))
-    done <<< "$STAT"
+    done < "$STAT_FILE"
   fi
 
   # Layer B — cross-family verifier.
@@ -145,14 +146,13 @@ done
 
 # Selection: deterministic, no model in the loop.
 WINNER_N="$(echo "$RANKING" | jq '
-  map(select(.verdict != "fail"))                             # rule 1
+  map(select(.layer_a_pass == true and .verdict != "fail"))    # rule 1
   | sort_by(
-      (if .layer_a_pass then 0 else 1 end),                   # rule 2
       (if .verdict == "pass" then 0
        elif .verdict == "uncertain" then 1
-       else 2 end),                                            # rule 3
-      .diff_lines,                                              # rule 4
-      (- (.verifier_score // 0))                                # rule 5
+       else 2 end),                                            # rule 2
+      .diff_lines,                                             # rule 3
+      (- (.verifier_score // 0))                               # rule 4
     )
   | .[0].n // null
 ')"

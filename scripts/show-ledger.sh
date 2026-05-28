@@ -27,20 +27,35 @@ echo "cc-boost 失败账本：$LEDGER"
 echo "条目总数：$TOTAL"
 echo ""
 
-echo "按失败类型分组（failure.type）："
-jq -r '.failure.type' "$LEDGER" 2>/dev/null | sort | uniq -c | sort -rn | head -n 10
+echo "按事件类型分组："
+jq -r '
+  .failure.type
+  // .verdict.verdict
+  // .candidate.verdict
+  // .phase
+  // "unknown"
+' "$LEDGER" 2>/dev/null | sort | uniq -c | sort -rn | head -n 10
 echo ""
 
 echo "按 executor 模型分组："
 jq -r '.executor_model // "unknown"' "$LEDGER" 2>/dev/null | sort | uniq -c | sort -rn | head -n 10
 echo ""
 
-echo "最近条目（latest $LIMIT）："
+echo "最近条目（latest ${LIMIT}）："
 if [[ -n "$TYPE_FILTER" ]]; then
-  jq -c --arg t "$TYPE_FILTER" 'select(.failure.type==$t)' "$LEDGER" 2>/dev/null \
+  jq -c --arg t "$TYPE_FILTER" '
+    select((.failure.type // .verdict.verdict // .candidate.verdict // .phase // "unknown") == $t)
+  ' "$LEDGER" 2>/dev/null \
     | tail -n "$LIMIT"
 else
   tail -n "$LIMIT" "$LEDGER"
 fi | jq -r '
-  "\(.ts)  [\(.executor_model // "?")]  \(.failure.type)  — \(.failure.summary // "")"
+  def event_type: (.failure.type // .verdict.verdict // .candidate.verdict // .phase // "unknown");
+  def event_summary:
+    (.failure.summary
+     // .verdict.reasoning
+     // .candidate.verifier_full.reasoning
+     // .candidate.verdict
+     // "");
+  "\(.ts)  [\(.executor_model // "?")]  \(event_type)  — \(event_summary)"
 ' 2>/dev/null

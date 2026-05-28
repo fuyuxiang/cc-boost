@@ -25,7 +25,7 @@ claude
 
 `/cc-init` 会在当前项目生成 `scripts/agent-check.sh`、`.cc-boost/config.json`、失败账本和 `CLAUDE.md` 受控块。之后正常使用 Claude Code 即可；cc-boost 会在后台跑检查、记录失败，并在非平凡 diff 上调用 verifier。
 
-无任何 provider key 也能装。`/cc-init` 在没有 key 时仍会完成初始化、启用 Layer A 的所有能力（本地检查、失败账本、lessons 注入、`/cc-task` 的候选生成），只把 Layer B 的跨模型 verifier 写成 disabled。后续配上 key 再跑 `/cc-doctor` 就能解锁。
+无任何 provider key 也能装。`/cc-init` 在没有 key 时仍会完成初始化、启用 Layer A 的所有能力（本地检查、失败账本、lessons 注入、`/cc-task` 的候选生成），只把 Layer B 的跨模型 verifier 写成 disabled。后续配上 key 后运行 `/cc-budget --verifier=on` 解锁，再用 `/cc-doctor` 检查状态。
 
 ## 快速上手
 
@@ -57,7 +57,7 @@ cc-boost 不参与 Claude Code 自身的执行模型链路——你怎么跑 Cla
 export ZAI_API_KEY=...        # 或 MINIMAX_API_KEY / MOONSHOT_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY
 ```
 
-然后重跑 `/cc-doctor`，verifier 会自动启用。复杂任务用 Best-of-N：
+然后运行 `/cc-budget --verifier=on` 并重跑 `/cc-doctor` 检查状态。复杂任务用 Best-of-N：
 
 ```text
 /cc-task 为 GET /users 增加 cursor pagination --n=2 --budget=medium
@@ -159,11 +159,10 @@ cc-task-apply.sh
 
 选择规则：
 
-1. 排除 `verdict == "fail"`。
-2. 优先 Layer A 通过。
-3. 优先 `pass`，其次 `uncertain`，最后 `skipped`。
-4. 同档里选 `diff_lines` 最小。
-5. 再用 verifier score 打破平局。
+1. 排除 Layer A 失败或 `verdict == "fail"` 的候选。
+2. 优先 `pass`，其次 `uncertain`，最后 `skipped`。
+3. 同档里选 `diff_lines` 最小。
+4. 再用 verifier score 打破平局。
 
 ### 4. 失败账本与 lessons
 

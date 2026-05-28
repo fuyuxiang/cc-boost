@@ -105,7 +105,7 @@ fi
 
 # Classify the diff.
 CLASSIFY_JSON="$("$SCRIPT_DIR/diff-classify.sh" 2>/dev/null || echo '{"trivial":true,"hash":""}')"
-TRIVIAL="$(echo "$CLASSIFY_JSON" | jq -r '.trivial // true')"
+TRIVIAL="$(echo "$CLASSIFY_JSON" | jq -r 'if has("trivial") then .trivial else true end')"
 DIFF_HASH="$(echo "$CLASSIFY_JSON" | jq -r '.hash // ""')"
 DIFF_FILES="$(echo "$CLASSIFY_JSON" | jq -r '.files // 0')"
 DIFF_LINES="$(echo "$CLASSIFY_JSON" | jq -r '.lines // 0')"
@@ -133,15 +133,16 @@ TASK_FILE="$STATE_DIR/last-prompt.txt"
 DIFF_FILE="$STATE_DIR/final-diff.patch"
 (
   cd "$PROJECT_DIR" || exit 0
-  UNTRACKED="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
-  if [[ -n "$UNTRACKED" ]]; then
-    # shellcheck disable=SC2086
-    git add -N -- $UNTRACKED 2>/dev/null || true
+  UNTRACKED=()
+  while IFS= read -r -d '' path; do
+    UNTRACKED+=("$path")
+  done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
+  if (( ${#UNTRACKED[@]} > 0 )); then
+    git add -N -- "${UNTRACKED[@]}" 2>/dev/null || true
   fi
   git diff HEAD > "$DIFF_FILE" 2>/dev/null || true
-  if [[ -n "$UNTRACKED" ]]; then
-    # shellcheck disable=SC2086
-    git reset -q -- $UNTRACKED 2>/dev/null || true
+  if (( ${#UNTRACKED[@]} > 0 )); then
+    git reset -q -- "${UNTRACKED[@]}" 2>/dev/null || true
   fi
 )
 
@@ -158,7 +159,7 @@ fi
 VERDICT_JSON="$("$SCRIPT_DIR/run-verifier.sh" \
   --task-file="$TASK_FILE" \
   --diff-file="$DIFF_FILE" \
-  --layer-a-log="$LOG_FILE" 2>/dev/null || true)"
+  --layer-a-log="$LOG_FILE" 2>/dev/null)"
 RVRC=$?
 
 # Always log the verdict to the ledger for /cc-ledger and lesson compilation.
