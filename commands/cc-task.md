@@ -86,11 +86,12 @@ deterministic selection rule. stdout is the evaluation JSON with `ranking`
 and `winner`.
 
 The verifier is automatically skipped when `.cc-boost/config.json` has
-`verifier.enabled: false` (e.g. no second-family key configured). This is
-normal — every candidate's `verdict` will be `skipped`, and the selection
-rule degrades to "Layer A pass + quality_score + smallest diff_lines". The
-run is still valid; just call this out in step 6 so the user knows verifier
-didn't contribute to the ranking.
+`verifier.enabled: false`, or when `verifier.enabled: "auto"` but the
+OpenAI-compatible verifier env vars are incomplete. This is normal — every
+candidate's `verdict` will be `skipped`, and the selection rule degrades to
+"Layer A pass + quality_score + smallest diff_lines". The run is still valid;
+just call this out in step 6 so the user knows verifier didn't contribute to
+the ranking.
 
 Exit code 2 means no acceptable winner (all candidates failed Layer A,
 failed verifier, or both). In that case, do NOT call
@@ -126,7 +127,7 @@ cc-boost /cc-task summary
   N       : <N>
   Budget  : <budget>
   Verifier: cross-family (glm-5)   # or "skipped (--no-verifier)"
-                                   # or "skipped (verifier.enabled=false — set a non-Claude key to enable)"
+                                   # or "skipped (set CC_BOOST_VERIFIER_* env)"
 
 | Cand | Strategy hint      | Layer A | Verdict   | Quality | Diff lines |
 |------|--------------------|---------|-----------|---------|------------|
@@ -139,15 +140,17 @@ Action: applied to working tree (uncommitted).
 
 When all rows show `skipped` because verifier is disabled, append a single
 line under the table: "Selection used Layer A pass + deterministic quality
-score + smallest diff only — configure a non-Claude provider key to enable
-cross-family verification."
+score + smallest diff only — 如需启用 cross-family verifier，请设置
+OpenAI API 格式的 `CC_BOOST_VERIFIER_BASE_URL`、`CC_BOOST_VERIFIER_API_KEY`
+和 `CC_BOOST_VERIFIER_MODEL`（默认 protocol=openai_chat）。"
 
 Pull every column directly from the evaluation JSON; do not paraphrase.
 
 ## Hard rules
 
 - Never bypass the verifier silently. If you skip it (via `--no-verifier`,
-  or because `verifier.enabled: false` in config), say so in step 6's report.
+  `verifier.enabled: false`, or incomplete `CC_BOOST_VERIFIER_*` env), say so
+  in step 6's report.
 - Never merge a candidate that the verifier rated `fail`.
 - Never run more than 3 parallel candidates without explicit `--budget=high`.
 - Never delete worktrees outside `.cc-boost/runtime/worktrees/<run-id>/` — the apply

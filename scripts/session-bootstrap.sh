@@ -15,8 +15,10 @@ if ! cc_enabled; then exit 0; fi
 CFG="$(cc_config_path)"
 EXEC_MODEL="$(cc_cfg executor.model unknown)"
 EXEC_PROVIDER="$(cc_cfg executor.provider unknown)"
-VERIFIER_MODEL="$(cc_cfg verifier.model none)"
-VERIFIER_PROVIDER="$(cc_cfg verifier.provider none)"
+VERIFIER_MODEL="$(cc_cfg verifier.model "${CC_BOOST_VERIFIER_MODEL:-none}")"
+VERIFIER_PROVIDER_FALLBACK="none"
+[[ -n "${CC_BOOST_VERIFIER_BASE_URL:-}" ]] && VERIFIER_PROVIDER_FALLBACK="cc-boost-verifier"
+VERIFIER_PROVIDER="$(cc_cfg verifier.provider "$VERIFIER_PROVIDER_FALLBACK")"
 QUALITY_MODE="$(cc_cfg quality.mode light)"
 REGRESSION_ONLY="$(cc_cfg quality.regression_only true)"
 

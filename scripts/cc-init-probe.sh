@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Helper for /cc-init step 3: probe provider env vars and return resolved roles.
+# Helper for /cc-init step 3: probe verifier/provider env vars and return roles.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +16,9 @@ PROBE_JSON="$(cc_probe_providers)"
 exec_family="$(echo "$ROLES_JSON" | jq -r '.executor.family // ""')"
 verif_family="$(echo "$ROLES_JSON" | jq -r '.verifier.family // ""')"
 enable_verifier="false"
-if [[ -n "$exec_family" && -n "$verif_family" && "$exec_family" != "$verif_family" ]]; then
+if cc_generic_verifier_configured; then
+  enable_verifier="true"
+elif [[ -n "$exec_family" && -n "$verif_family" && "$exec_family" != "$verif_family" ]]; then
   enable_verifier="true"
 fi
 

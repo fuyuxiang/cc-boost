@@ -23,9 +23,20 @@ NOT pass `--force`, leave it alone. Otherwise:
   `.cc-boost/agent-check.sh`.
 - `chmod +x .cc-boost/agent-check.sh`.
 
-### 3. Probe provider env vars
+### 3. Probe verifier env vars
 Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/cc-init-probe.sh"`. It emits the
 resolved role assignment as JSON.
+
+Preferred Layer B verifier setup is a generic OpenAI API compatible endpoint:
+
+```bash
+export CC_BOOST_VERIFIER_BASE_URL="https://your-provider-or-gateway/v1"
+export CC_BOOST_VERIFIER_API_KEY="your key"
+export CC_BOOST_VERIFIER_MODEL="glm-5"
+```
+
+`CC_BOOST_VERIFIER_PROTOCOL` is optional and defaults to `openai_chat`, which
+means OpenAI API format: `POST <base_url>/chat/completions`.
 
 ### 4. Write `.cc-boost/config.json`
 Use the resolved-roles JSON from step 3. Include:
@@ -34,7 +45,10 @@ Use the resolved-roles JSON from step 3. Include:
   "enabled": true,
   "executor":  { "id":"...","provider":"...","family":"...","model":"..." },
   "verifier":  { "id":"...","provider":"...","family":"...","model":"...",
-                 "enabled": true,
+                 "protocol": "openai_chat",
+                 "base_url": "https://your-provider-or-gateway/v1",
+                 "api_key_env": "CC_BOOST_VERIFIER_API_KEY",
+                 "enabled": "auto",
                  "min_files": 1,
                  "min_lines": 20,
                  "uncertain_action": "allow",
@@ -51,16 +65,22 @@ Use the resolved-roles JSON from step 3. Include:
   "best_of_n": { "default_n": 2, "budget": "medium" }
 }
 ```
-The `verifier.enabled` flag should default to `true` only if a cross-family
-verifier is available (executor.family != verifier.family); otherwise set
-`verifier.enabled: false` so we don't fall back to same-model self-review.
+The `verifier.enabled` flag is tri-state:
+- `"auto"` means enable Layer B when `CC_BOOST_VERIFIER_BASE_URL`,
+  `CC_BOOST_VERIFIER_API_KEY`, and `CC_BOOST_VERIFIER_MODEL` are all present.
+- `true` forces verifier on if the endpoint can resolve.
+- `false` forces verifier off.
 
-If no provider env var is set at all, step 3 will return null roles. In that
+New configs should prefer `"auto"` so a user can enable verifier later by
+exporting the three env vars without editing `.cc-boost/config.json`.
+
+If no verifier env var is set at all, step 3 may return null roles. In that
 case still proceed: write a config with `enabled: true` and
-`verifier.enabled: false`, and use a placeholder executor block
+`verifier.enabled: "auto"`, and use a placeholder executor block
 (`{"id":"unknown","provider":"","family":"","model":""}`). The Layer A path
-(agent-check + failure ledger + lessons) works without any key. The user can
-later export a verifier key and rerun `/cc-doctor` to flip Layer B on.
+(agent-check + failure ledger + lessons) works without any key. The final
+report must show a Chinese verifier reminder with the exact OpenAI API format
+exports so the user knows how to enable Layer B later.
 
 `verifier.min_files` / `min_lines` define when a diff is considered
 non-trivial enough to invoke Layer B. `uncertain_action` is `"allow"` or
@@ -133,9 +153,16 @@ than fabricating a model name.
 cc-boost initialized
   Project type   : node
   Agent check    : .cc-boost/agent-check.sh ✓
-  Executor       : MiniMax-M2.7 (minimax)         # or "(no provider key — Layer A only)"
-  Verifier       : glm-5 (zai)        ← cross-family ✓
-                   # or "disabled — set a non-Claude provider key to enable Layer B"
+  Executor       : MiniMax-M2.7 (minimax)         # or "(no executor provider key — Layer A only)"
+  Verifier       : glm-5 (cc-boost-verifier, openai_chat) ← cross-family ✓
+                   # or:
+                   disabled
+                   提醒：如需启用 Layer B verifier，请设置一个外部模型的
+                   OpenAI API 格式接口。默认 protocol=openai_chat，
+                   调用 POST <base_url>/chat/completions：
+                     export CC_BOOST_VERIFIER_BASE_URL="https://your-provider-or-gateway/v1"
+                     export CC_BOOST_VERIFIER_API_KEY="你的 key"
+                     export CC_BOOST_VERIFIER_MODEL="glm-5"
   Summarizer     : MiniMax-M2.7-highspeed (minimax)
   Long context   : kimi-k2 (moonshot)
   Quality mode   : light (regression-only baseline captured)
@@ -149,5 +176,5 @@ Run /cc-doctor to verify hooks fire correctly.
 - Never change package.json / pyproject.toml / Cargo.toml.
 - If `--force` is in arguments, overwrite `.cc-boost/agent-check.sh` too.
 - Never abort because provider keys are missing. Layer A runs offline; the
-  config is written with `verifier.enabled: false` and the report tells the
+  config is written with `verifier.enabled: "auto"` and the report tells the
   user how to unlock Layer B later.

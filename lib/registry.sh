@@ -31,14 +31,47 @@ claude-haiku-45|anthropic|claude|fast,verify|ANTHROPIC_API_KEY|claude-haiku-4-5|
 EOF
 )
 
-# Provider endpoint table — used by run-verifier.sh to call models directly.
+# Generic verifier endpoint. This is the preferred Layer B configuration:
+# users set one OpenAI API compatible endpoint instead of learning provider-
+# specific environment variable names.
+#
+# Required:
+#   CC_BOOST_VERIFIER_BASE_URL=https://your-provider-or-gateway/v1
+#   CC_BOOST_VERIFIER_API_KEY=...
+#   CC_BOOST_VERIFIER_MODEL=...
+#
+# Optional:
+#   CC_BOOST_VERIFIER_PROTOCOL=openai_chat   (default)
+#   CC_BOOST_VERIFIER_FAMILY=glm             (used only for cross-family hints)
+cc_generic_verifier_configured() {
+  [[ -n "${CC_BOOST_VERIFIER_BASE_URL:-}" \
+    && -n "${CC_BOOST_VERIFIER_API_KEY:-}" \
+    && -n "${CC_BOOST_VERIFIER_MODEL:-}" ]]
+}
+
+cc_generic_verifier_role() {
+  local family="${CC_BOOST_VERIFIER_FAMILY:-external}"
+  jq -n \
+    --arg id "cc-boost-verifier" \
+    --arg p "cc-boost-verifier" \
+    --arg f "$family" \
+    --arg m "${CC_BOOST_VERIFIER_MODEL:-}" \
+    --arg protocol "${CC_BOOST_VERIFIER_PROTOCOL:-openai_chat}" \
+    --arg base_url "${CC_BOOST_VERIFIER_BASE_URL:-}" \
+    '{id:$id, provider:$p, family:$f, model:$m,
+      protocol:$protocol, base_url:$base_url,
+      api_key_env:"CC_BOOST_VERIFIER_API_KEY"}'
+}
+
+# Provider endpoint table — legacy convenience presets used by run-verifier.sh
+# when an older config only contains provider/model. New configs should persist
+# protocol/base_url/api_key_env explicitly under .verifier.
 # Row: provider|protocol|base_url|env_var
 #   protocol = openai_chat | anthropic_messages
 #   base_url is the chat/messages endpoint root; default model path is appended
 #     by run-verifier.sh per protocol.
-# Override at runtime with CC_BOOST_<PROVIDER>_BASE_URL env vars (e.g.
-# CC_BOOST_MINIMAX_BASE_URL=https://my-proxy.local/v1) to support routers and
-# self-hosted endpoints.
+# For routers and self-hosted endpoints, prefer the generic
+# CC_BOOST_VERIFIER_BASE_URL flow above.
 CC_PROVIDER_TABLE=$(cat <<'EOF'
 minimax|openai_chat|https://api.minimaxi.com/v1|MINIMAX_API_KEY
 zai|openai_chat|https://api.z.ai/api/paas/v4|ZAI_API_KEY
@@ -53,6 +86,13 @@ EOF
 # Honors CC_BOOST_<PROVIDER>_BASE_URL override.
 cc_provider_endpoint() {
   local want="$1"
+  if [[ "$want" == "cc-boost-verifier" || "$want" == "openai-compatible" ]]; then
+    local protocol="${CC_BOOST_VERIFIER_PROTOCOL:-openai_chat}"
+    local base_url="${CC_BOOST_VERIFIER_BASE_URL:-}"
+    [[ -n "$base_url" ]] || return 1
+    echo "$protocol|$base_url|CC_BOOST_VERIFIER_API_KEY"
+    return 0
+  fi
   while IFS='|' read -r provider protocol base_url env_var; do
     [[ -z "$provider" || "$provider" =~ ^# ]] && continue
     if [[ "$provider" == "$want" ]]; then
@@ -81,6 +121,11 @@ cc_models_for_tier() {
 # Falls back to same family (still better than nothing).
 cc_pick_cross_family_verifier() {
   local exec_family="$1"
+  if cc_generic_verifier_configured; then
+    local generic_family="${CC_BOOST_VERIFIER_FAMILY:-external}"
+    echo "cc-boost-verifier|cc-boost-verifier|$generic_family|$CC_BOOST_VERIFIER_MODEL"
+    return 0
+  fi
   local primary="" fallback=""
   while IFS='|' read -r id provider family tiers env_var model anthropic_compat; do
     [[ -z "$id" || "$id" =~ ^# ]] && continue
@@ -103,6 +148,22 @@ cc_probe_providers() {
     {
       echo '['
       first=1
+      generic_present="false"; cc_generic_verifier_configured && generic_present="true"
+      jq -n \
+        --arg id "cc-boost-verifier" \
+        --arg provider "cc-boost-verifier" \
+        --arg family "${CC_BOOST_VERIFIER_FAMILY:-external}" \
+        --arg env "CC_BOOST_VERIFIER_API_KEY" \
+        --argjson present "$generic_present" \
+        --arg model "${CC_BOOST_VERIFIER_MODEL:-}" \
+        --arg protocol "${CC_BOOST_VERIFIER_PROTOCOL:-openai_chat}" \
+        --arg base_url "${CC_BOOST_VERIFIER_BASE_URL:-}" \
+        '{id:$id, provider:$provider, family:$family, env:$env,
+          present:$present, model:$model, tiers:"verify",
+          protocol:$protocol, base_url:$base_url,
+          api_format:"OpenAI /v1/chat/completions compatible",
+          anthropic_compat:false}'
+      first=0
       while IFS='|' read -r id provider family tiers env_var model anthropic_compat; do
         [[ -z "$id" || "$id" =~ ^# ]] && continue
         present="false"; [[ -n "${!env_var:-}" ]] && present="true"
@@ -127,7 +188,12 @@ cc_resolve_roles() {
   local choice
   choice="$(cc_models_for_tier exec | head -n1)"
   if [[ -z "$choice" ]]; then
-    jq -n '{executor:null, verifier:null, summarizer:null, fallback:null, longctx:null}'
+    local v_json="null"
+    if cc_generic_verifier_configured; then
+      v_json="$(cc_generic_verifier_role)"
+    fi
+    jq -n --argjson v "$v_json" \
+      '{executor:null, verifier:$v, summarizer:null, fallback:null, longctx:null}'
     return
   fi
   IFS='|' read -r exec_id exec_provider exec_family exec_model _ <<< "$choice"
@@ -137,8 +203,12 @@ cc_resolve_roles() {
   local v_id v_provider v_family v_model v_json="null"
   if [[ -n "$verifier_choice" ]]; then
     IFS='|' read -r v_id v_provider v_family v_model <<< "$verifier_choice"
-    v_json="$(jq -n --arg id "$v_id" --arg p "$v_provider" --arg f "$v_family" --arg m "$v_model" \
-      '{id:$id, provider:$p, family:$f, model:$m}')"
+    if [[ "$v_provider" == "cc-boost-verifier" ]]; then
+      v_json="$(cc_generic_verifier_role)"
+    else
+      v_json="$(jq -n --arg id "$v_id" --arg p "$v_provider" --arg f "$v_family" --arg m "$v_model" \
+        '{id:$id, provider:$p, family:$f, model:$m}')"
+    fi
   fi
 
   local summarizer_choice s_json="null"

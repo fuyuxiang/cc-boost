@@ -118,9 +118,8 @@ fi
 rm -f "$BLOCKS_FILE" 2>/dev/null || true
 
 # --- Layer B (only if enabled and a verifier role is configured) ---
-VERIFIER_ENABLED="$(cc_cfg verifier.enabled false)"
-VERIFIER_MODEL="$(cc_cfg verifier.model "")"
-if [[ "$VERIFIER_ENABLED" != "true" || -z "$VERIFIER_MODEL" ]]; then
+VERIFIER_MODEL="$(cc_cfg verifier.model "${CC_BOOST_VERIFIER_MODEL:-}")"
+if ! cc_verifier_enabled || [[ -z "$VERIFIER_MODEL" ]]; then
   exit 0
 fi
 

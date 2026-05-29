@@ -25,7 +25,7 @@ claude
 
 `/cc-init` 会在当前项目生成一个被整体 gitignore 的 `.cc-boost/` 目录，里面包含 `agent-check.sh`、配置、质量 baseline、失败账本、review packet 和本地规则快照。之后正常使用 Claude Code 即可；cc-boost 会在后台跑检查、区分历史失败和新增回归，并在非平凡 diff 上调用 verifier。
 
-无任何 provider key 也能装。`/cc-init` 在没有 key 时仍会完成初始化、启用 Layer A 的所有能力（本地检查、失败账本、lessons 注入、`/cc-task` 的候选生成），只把 Layer B 的跨模型 verifier 写成 disabled。后续配上 key 后运行 `/cc-budget --verifier=on` 解锁，再用 `/cc-doctor` 检查状态。
+无任何 verifier key 也能装。`/cc-init` 在没有 key 时仍会完成初始化、启用 Layer A 的所有能力（本地检查、失败账本、lessons 注入、`/cc-task` 的候选生成），Layer B 使用 `verifier.enabled: "auto"`，并用中文提示如何配置 OpenAI API 格式的 verifier。后续配上三个 `CC_BOOST_VERIFIER_*` 环境变量后，重启 Claude Code 会话并运行 `/cc-doctor` 检查状态。
 
 ## 快速上手
 
@@ -50,14 +50,25 @@ cc-boost 不参与 Claude Code 自身的执行模型链路——你怎么跑 Cla
 
 ### 配 verifier key 解锁 Layer B（可选）
 
-为了真正的 cross-family 验证，cc-boost 需要一个**不同于执行模型家族**的 provider key——它会用这个 key 通过 HTTP 直调 verifier 模型。复用 Claude Code 已配置的 key 在技术上可行，但同家族审同家族会让 cross-family 解相关性消失，等于只剩自审，所以默认禁用。
+为了真正的 cross-family 验证，cc-boost 需要一个**不同于执行模型家族**的外部 verifier 模型。推荐配置一个 OpenAI API 格式兼容接口；默认 `protocol=openai_chat`，也就是调用：
 
-```bash
-# 假设你的 Claude Code 跑的是 Claude，可以加一个非 Claude 家族的 key 当 verifier：
-export ZAI_API_KEY=...        # 或 MINIMAX_API_KEY / MOONSHOT_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY
+```text
+POST <CC_BOOST_VERIFIER_BASE_URL>/chat/completions
 ```
 
-然后运行 `/cc-budget --verifier=on` 并重跑 `/cc-doctor` 检查状态。复杂任务用 Best-of-N：
+```bash
+export CC_BOOST_VERIFIER_BASE_URL="https://your-provider-or-gateway/v1"
+export CC_BOOST_VERIFIER_API_KEY="你的 key"
+export CC_BOOST_VERIFIER_MODEL="glm-5"
+
+# 可选；默认就是 openai_chat
+export CC_BOOST_VERIFIER_PROTOCOL="openai_chat"
+
+# 可选；用于 /cc-doctor 判断是否跨模型家族
+export CC_BOOST_VERIFIER_FAMILY="glm"
+```
+
+设置后三个必填变量都存在时，`verifier.enabled: "auto"` 会自动启用 verifier；如果 `.cc-boost/config.json` 里显式写了 `verifier.enabled=false`，则以显式关闭为准。复杂任务用 Best-of-N：
 
 ```text
 /cc-task 为 GET /users 增加 cursor pagination --n=2 --budget=medium
@@ -76,7 +87,7 @@ export ZAI_API_KEY=...        # 或 MINIMAX_API_KEY / MOONSHOT_API_KEY / DEEPSEE
 | 组件 | 类型 | 说明 |
 |---|---|---|
 | `/cc-init` | slash command | 检测项目、安装 `.cc-boost/agent-check.sh`、写 `.cc-boost/config.json` 和本地规则快照 |
-| `/cc-doctor` | slash command | 检查 provider key、角色分配、hook、agent-check、账本状态 |
+| `/cc-doctor` | slash command | 检查 verifier API 设置、角色分配、hook、agent-check、账本状态 |
 | `/cc-task` | slash command | Best-of-N 编码任务；创建候选 worktree、并行跑 candidate、收集质量证据、验证、选 winner、apply diff |
 | `/cc-budget` | slash command | 调整 quality mode、N、verifier 开关、节流、预算档位 |
 | `/cc-ledger` | slash command | 查看 `.cc-boost/runtime/failures.jsonl` 的失败类型、模型分布和最近记录 |
@@ -206,11 +217,14 @@ cc-task-apply.sh
     "model": "MiniMax-M2.7"
   },
   "verifier": {
-    "id": "glm-5",
-    "provider": "zai",
+    "id": "cc-boost-verifier",
+    "provider": "cc-boost-verifier",
     "family": "glm",
     "model": "glm-5",
-    "enabled": true,
+    "protocol": "openai_chat",
+    "base_url": "https://your-provider-or-gateway/v1",
+    "api_key_env": "CC_BOOST_VERIFIER_API_KEY",
+    "enabled": "auto",
     "min_files": 1,
     "min_lines": 20,
     "uncertain_action": "allow",
@@ -253,23 +267,18 @@ cc-task-apply.sh
 }
 ```
 
-Provider endpoint 可用环境变量覆盖：
+`api_key_env` 只记录环境变量名，不保存 key 明文。默认 verifier 协议是
+`openai_chat`，表示 OpenAI API 格式：
+`POST <base_url>/chat/completions`。多数 OpenAI-compatible 网关只需要设置：
 
 ```bash
-export CC_BOOST_MINIMAX_BASE_URL=https://my-proxy.local/v1
-export CC_BOOST_ZAI_BASE_URL=https://my-zai-proxy.local/api/paas/v4
+export CC_BOOST_VERIFIER_BASE_URL="https://your-provider-or-gateway/v1"
+export CC_BOOST_VERIFIER_API_KEY="你的 key"
+export CC_BOOST_VERIFIER_MODEL="glm-5"
 ```
 
-内置 provider 表在 `lib/registry.sh`：
-
-| Env var | Provider | Family | Verifier API |
-|---|---|---|---|
-| `MINIMAX_API_KEY` | minimax | minimax | OpenAI-compatible chat |
-| `ZAI_API_KEY` | zai | glm | OpenAI-compatible chat |
-| `MOONSHOT_API_KEY` | moonshot | kimi | OpenAI-compatible chat |
-| `DEEPSEEK_API_KEY` | deepseek | deepseek | OpenAI-compatible chat |
-| `DASHSCOPE_API_KEY` | dashscope | qwen | OpenAI-compatible chat |
-| `ANTHROPIC_API_KEY` | anthropic | claude | Anthropic messages |
+旧版 provider preset 仍保留兼容，但新项目建议使用上面的通用 verifier
+变量，避免用户记不同厂商的 key 名和 base URL。
 
 ## 环境要求
 
@@ -401,7 +410,7 @@ cc-boost 会执行真实操作，不仅仅修改提示词。它会：
 
 ## 当前边界
 
-- 跨模型能力依赖 verifier provider key。没有第二个模型族时会退化，`/cc-doctor` 会提示。
+- 跨模型能力依赖外部 verifier API。没有 `CC_BOOST_VERIFIER_BASE_URL`、`CC_BOOST_VERIFIER_API_KEY`、`CC_BOOST_VERIFIER_MODEL` 时只运行本地 Layer A，`/cc-doctor` 会用中文提示 OpenAI API 格式配置方式。
 - `cc-boost-verifier` subagent 仍是 `model: inherit`，真正 Stop gate 跨模型走的是 `scripts/run-verifier.sh`。
 - `/cc-compile-lessons` 由 lesson compiler Agent 完成失败聚类，质量取决于该模型的输出，本地无 Bash 兜底。
 - `/cc-bench` 生成本地 fixture，但实际求解仍依赖 Claude Code Agent 能力和你的 provider 质量。

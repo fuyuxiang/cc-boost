@@ -72,21 +72,39 @@ if ! command -v jq >/dev/null 2>&1; then emit_internal "jq missing"; fi
 if ! command -v curl >/dev/null 2>&1; then emit_internal "curl missing"; fi
 
 # Pull verifier role from config.
-ENABLED="$(jq -r '.verifier.enabled // false' "$CFG" 2>/dev/null)"
-[[ "$ENABLED" == "true" ]] || emit_skip "verifier.enabled is false"
+if ! cc_verifier_enabled; then
+  emit_skip "verifier 未启用。默认 auto 模式需要设置 CC_BOOST_VERIFIER_BASE_URL、CC_BOOST_VERIFIER_API_KEY、CC_BOOST_VERIFIER_MODEL；如果配置为 verifier.enabled=false 则会强制关闭。"
+fi
 
 V_PROVIDER="$(jq -r '.verifier.provider // ""' "$CFG" 2>/dev/null)"
 V_MODEL="$(jq -r '.verifier.model // ""' "$CFG" 2>/dev/null)"
 V_FAMILY="$(jq -r '.verifier.family // ""' "$CFG" 2>/dev/null)"
+V_PROTOCOL="$(jq -r '.verifier.protocol // ""' "$CFG" 2>/dev/null)"
+V_BASE_URL="$(jq -r '.verifier.base_url // ""' "$CFG" 2>/dev/null)"
+V_ENV_VAR="$(jq -r '.verifier.api_key_env // ""' "$CFG" 2>/dev/null)"
 EXEC_FAMILY="$(jq -r '.executor.family // ""' "$CFG" 2>/dev/null)"
-[[ -n "$V_PROVIDER" && -n "$V_MODEL" ]] || emit_skip "no verifier configured"
+[[ -n "$V_PROVIDER" ]] || V_PROVIDER="cc-boost-verifier"
+[[ -n "$V_MODEL" ]] || V_MODEL="${CC_BOOST_VERIFIER_MODEL:-}"
+[[ -n "$V_FAMILY" ]] || V_FAMILY="${CC_BOOST_VERIFIER_FAMILY:-external}"
+[[ -n "$V_MODEL" ]] || emit_skip "verifier model 未配置。请设置：export CC_BOOST_VERIFIER_MODEL=\"glm-5\""
 
+EP_PROTOCOL=""
+EP_BASE_URL=""
+EP_ENV_VAR=""
 ENDPOINT="$(cc_provider_endpoint "$V_PROVIDER" || true)"
-[[ -n "$ENDPOINT" ]] || emit_internal "unknown provider: $V_PROVIDER"
-IFS='|' read -r PROTOCOL BASE_URL ENV_VAR <<< "$ENDPOINT"
+if [[ -n "$ENDPOINT" ]]; then
+  IFS='|' read -r EP_PROTOCOL EP_BASE_URL EP_ENV_VAR <<< "$ENDPOINT"
+fi
+
+PROTOCOL="${V_PROTOCOL:-${EP_PROTOCOL:-openai_chat}}"
+BASE_URL="${V_BASE_URL:-${EP_BASE_URL:-${CC_BOOST_VERIFIER_BASE_URL:-}}}"
+ENV_VAR="${V_ENV_VAR:-${EP_ENV_VAR:-CC_BOOST_VERIFIER_API_KEY}}"
+
+[[ -n "$BASE_URL" ]] || emit_skip "verifier 未配置 base_url。请设置 OpenAI API 格式地址：export CC_BOOST_VERIFIER_BASE_URL=\"https://.../v1\""
+[[ "$PROTOCOL" == "openai_chat" || "$PROTOCOL" == "anthropic_messages" ]] || emit_internal "unknown verifier protocol: $PROTOCOL"
 
 API_KEY="${!ENV_VAR:-}"
-[[ -n "$API_KEY" ]] || emit_skip "$ENV_VAR not set"
+[[ -n "$API_KEY" ]] || emit_skip "verifier API key 未设置。请设置：export $ENV_VAR=\"你的 key\""
 
 # Trim oversized inputs so we don't blow the verifier's context budget.
 trim_to() {

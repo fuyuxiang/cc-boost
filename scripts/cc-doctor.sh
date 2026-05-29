@@ -49,16 +49,22 @@ roles_json="$(cc_resolve_roles)"
 # role resolver. /cc-doctor must diagnose the config that hooks actually use,
 # not only the roles that would be chosen by a fresh /cc-init.
 cfg_executor_family=""
-cfg_ver_enabled="false"
+cfg_ver_enabled="auto"
 cfg_ver_provider=""
 cfg_ver_family=""
 cfg_ver_model=""
+cfg_ver_protocol=""
+cfg_ver_base_url=""
+cfg_ver_api_key_env=""
 if [[ "$cfg_ok" == "true" ]]; then
   cfg_executor_family="$(jq -r '.executor.family // ""' "$CFG" 2>/dev/null)"
-  cfg_ver_enabled="$(jq -r '.verifier.enabled // false' "$CFG" 2>/dev/null)"
+  cfg_ver_enabled="$(jq -r '.verifier.enabled // "auto"' "$CFG" 2>/dev/null)"
   cfg_ver_provider="$(jq -r '.verifier.provider // ""' "$CFG" 2>/dev/null)"
   cfg_ver_family="$(jq -r '.verifier.family // ""' "$CFG" 2>/dev/null)"
   cfg_ver_model="$(jq -r '.verifier.model // ""' "$CFG" 2>/dev/null)"
+  cfg_ver_protocol="$(jq -r '.verifier.protocol // ""' "$CFG" 2>/dev/null)"
+  cfg_ver_base_url="$(jq -r '.verifier.base_url // ""' "$CFG" 2>/dev/null)"
+  cfg_ver_api_key_env="$(jq -r '.verifier.api_key_env // ""' "$CFG" 2>/dev/null)"
 fi
 
 quality_mode="light"
@@ -114,7 +120,11 @@ if [[ -n "$exec_family" && -n "$ver_family" && "$exec_family" != "$ver_family" ]
 fi
 
 configured_xfamily="false"
-if [[ "$cfg_ver_enabled" == "true" && -n "$cfg_executor_family" && -n "$cfg_ver_family" && "$cfg_executor_family" != "$cfg_ver_family" ]]; then
+effective_ver_enabled="false"
+if cc_verifier_enabled; then
+  effective_ver_enabled="true"
+fi
+if [[ "$effective_ver_enabled" == "true" && -n "$cfg_executor_family" && -n "$cfg_ver_family" && "$cfg_executor_family" != "$cfg_ver_family" ]]; then
   configured_xfamily="true"
 fi
 
@@ -128,29 +138,57 @@ fi
 ver_endpoint_json="null"
 if [[ -n "$ver_provider" ]]; then
   ep="$(cc_provider_endpoint "$ver_provider" 2>/dev/null || true)"
+  v_proto=""
+  v_base=""
+  v_envvar=""
   if [[ -n "$ep" ]]; then
     IFS='|' read -r v_proto v_base v_envvar <<< "$ep"
-    v_keypresent="false"; [[ -n "${!v_envvar:-}" ]] && v_keypresent="true"
-    ver_endpoint_json="$(jq -n \
-      --arg provider "$ver_provider" --arg protocol "$v_proto" \
-      --arg base_url "$v_base" --arg env "$v_envvar" \
-      --arg present "$v_keypresent" \
-      '{provider:$provider, protocol:$protocol, base_url:$base_url, env:$env, key_present:($present=="true")}')"
   fi
+  [[ -n "$cfg_ver_protocol" ]] && v_proto="$cfg_ver_protocol"
+  [[ -n "$cfg_ver_base_url" ]] && v_base="$cfg_ver_base_url"
+  [[ -n "$cfg_ver_api_key_env" ]] && v_envvar="$cfg_ver_api_key_env"
+  [[ -n "$v_proto" ]] || v_proto="openai_chat"
+  [[ -n "$v_envvar" ]] || v_envvar="CC_BOOST_VERIFIER_API_KEY"
+  v_keypresent="false"; [[ -n "${!v_envvar:-}" ]] && v_keypresent="true"
+  ver_endpoint_json="$(jq -n \
+    --arg provider "$ver_provider" --arg protocol "$v_proto" \
+    --arg base_url "$v_base" --arg env "$v_envvar" \
+    --arg present "$v_keypresent" \
+    '{provider:$provider, protocol:$protocol, base_url:$base_url, env:$env,
+      key_present:($present=="true"),
+      api_format:(if $protocol == "openai_chat" then "OpenAI API 格式：POST <base_url>/chat/completions" else "Anthropic Messages API" end)}')"
 fi
 
 config_verifier_json="$(jq -n \
   --arg enabled "$cfg_ver_enabled" \
+  --arg effective_enabled "$effective_ver_enabled" \
   --arg provider "$cfg_ver_provider" \
   --arg family "$cfg_ver_family" \
   --arg model "$cfg_ver_model" \
-  '{enabled:($enabled=="true"), provider:$provider, family:$family, model:$model}')"
+  --arg protocol "$cfg_ver_protocol" \
+  --arg base_url "$cfg_ver_base_url" \
+  --arg api_key_env "$cfg_ver_api_key_env" \
+  '{enabled:$enabled, effective_enabled:($effective_enabled=="true"),
+    provider:$provider, family:$family, model:$model,
+    protocol:$protocol, base_url:$base_url, api_key_env:$api_key_env}')"
+
+verifier_setup_json="$(jq -n \
+  '{language:"zh-CN",
+    message:"如需启用 Layer B verifier，请配置一个不同于执行模型的外部模型。默认协议是 openai_chat，表示 OpenAI API 格式：POST <base_url>/chat/completions。",
+    required_env:["CC_BOOST_VERIFIER_BASE_URL","CC_BOOST_VERIFIER_API_KEY","CC_BOOST_VERIFIER_MODEL"],
+    optional_env:["CC_BOOST_VERIFIER_PROTOCOL=openai_chat","CC_BOOST_VERIFIER_FAMILY=<模型家族>"],
+    example:[
+      "export CC_BOOST_VERIFIER_BASE_URL=\"https://your-provider-or-gateway/v1\"",
+      "export CC_BOOST_VERIFIER_API_KEY=\"你的 key\"",
+      "export CC_BOOST_VERIFIER_MODEL=\"glm-5\""
+    ]}')"
 
 jq -n \
   --argjson roles "$roles_json" \
   --argjson probe "$probe_json" \
   --argjson ver_endpoint "$ver_endpoint_json" \
   --argjson config_verifier "$config_verifier_json" \
+  --argjson verifier_setup "$verifier_setup_json" \
   --arg cfg_ok "$cfg_ok" --arg cfg_err "$cfg_err" \
   --arg ac_ok "$ac_ok"   --arg ac_err "$ac_err" \
   --arg hooks_ok "$hooks_ok" --arg hook_err "$hook_err" \
@@ -174,6 +212,7 @@ jq -n \
     available_cross_family_verifier: ($available_xfamily=="true"),
     config_verifier: $config_verifier,
     verifier_endpoint: $ver_endpoint,
+    verifier_setup: $verifier_setup,
     roles:    $roles,
     providers:$probe
   }'

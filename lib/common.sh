@@ -92,6 +92,29 @@ cc_enabled() {
   [[ "$(cc_cfg enabled true)" == "true" ]]
 }
 
+# Layer B verifier enablement is tri-state:
+#   true  -> force on (assuming model/base_url/key can resolve)
+#   false -> force off
+#   auto  -> on when the generic OpenAI-compatible verifier env is complete
+cc_verifier_env_configured() {
+  local base_url model api_key_env
+  base_url="$(cc_cfg verifier.base_url "${CC_BOOST_VERIFIER_BASE_URL:-}")"
+  model="$(cc_cfg verifier.model "${CC_BOOST_VERIFIER_MODEL:-}")"
+  api_key_env="$(cc_cfg verifier.api_key_env CC_BOOST_VERIFIER_API_KEY)"
+  [[ -n "$base_url" && -n "$model" && -n "$api_key_env" && -n "${!api_key_env:-}" ]]
+}
+
+cc_verifier_enabled() {
+  local val
+  val="$(cc_cfg verifier.enabled auto)"
+  case "$val" in
+    true|on|1) return 0 ;;
+    false|off|0) return 1 ;;
+    auto|"") cc_verifier_env_configured ;;
+    *) return 1 ;;
+  esac
+}
+
 # Emit a JSON object on stdout that injects additionalContext into Claude.
 # Used by PostToolUse / UserPromptSubmit / SessionStart hooks.
 cc_emit_context() {
