@@ -3,9 +3,9 @@
 #
 # Strategy (Layer A of the verifier-gated harness):
 #   1. Skip fast if cc-boost is disabled or no agent-check.sh exists.
-#   2. Run scripts/agent-check.sh from the project root.
+#   2. Run .cc-boost/agent-check.sh from the project root.
 #   3. On failure: summarize the log into a structured failure record,
-#      append it to .cc-boost/failures.jsonl, and inject the structured
+#      append it to .cc-boost/runtime/failures.jsonl, and inject the structured
 #      summary back into Claude as additionalContext so it can repair.
 #   4. On success: stay silent (zero-noise path).
 #
@@ -64,7 +64,9 @@ CONSEC_FILE="$STATE_DIR/consec-fails"
 CONSEC=$(( $(cat "$CONSEC_FILE" 2>/dev/null || echo 0) + 1 ))
 echo "$CONSEC" > "$CONSEC_FILE"
 
-SUMMARY_JSON="$("$SCRIPT_DIR/summarize-failure.sh" "$LOG_FILE")"
+CLASSIFICATION_JSON="$("$SCRIPT_DIR/classify-failure.sh" "$LOG_FILE")"
+STATUS="$(echo "$CLASSIFICATION_JSON" | jq -r '.status // "regression"')"
+SUMMARY_JSON="$(echo "$CLASSIFICATION_JSON" | jq -c '.summary // {}')"
 
 # Persist into the failure ledger.
 TS="$(date -u +%FT%TZ)"
@@ -72,10 +74,26 @@ LEDGER_LINE="$(jq -n \
   --arg ts "$TS" \
   --arg phase "post-edit" \
   --arg consec "$CONSEC" \
-  --argjson failure "$SUMMARY_JSON" \
+  --arg status "$STATUS" \
+  --argjson classified "$CLASSIFICATION_JSON" \
   --arg model "${CC_BOOST_EXECUTOR_MODEL:-unknown}" \
-  '{ts:$ts, phase:$phase, consecutive:($consec|tonumber), executor_model:$model, failure:$failure}')"
+  '{ts:$ts, phase:$phase, status:$status, consecutive:($consec|tonumber),
+    executor_model:$model, failure:($classified.summary // {}), classification:$classified}')"
 cc_append_jsonl "$(cc_failures_path)" "$LEDGER_LINE"
+
+if [[ "$STATUS" == "baseline" ]]; then
+  rm -f "$CONSEC_FILE" 2>/dev/null || true
+  read -r -d '' CONTEXT <<EOF || true
+[cc-boost] agent-check still reports a known baseline failure, not a new regression from this edit.
+
+Structured failure:
+$SUMMARY_JSON
+
+Continue the requested task. Do not repair this unrelated baseline issue unless the user explicitly asks or your diff touched the cited file.
+EOF
+  cc_emit_context PostToolUse "$CONTEXT"
+  exit 0
+fi
 
 # Build a Claude-facing context block. Keep it short and actionable.
 read -r -d '' CONTEXT <<EOF || true

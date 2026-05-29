@@ -30,9 +30,12 @@ The orchestrator (the main Claude conversation, or `/cc-task`) will give you:
 
 1. **Original task description**: what the user actually asked for.
 2. **Diff or list of changed files**: use `git diff` and `Read` to inspect.
-3. **Layer A result**: stdout/stderr from `scripts/agent-check.sh` (already
+3. **Review packet**: deterministic JSON from `review-packet.sh` describing
+   changed files, diff size, risk level, related tests, callsite hints,
+   dependency/schema/security touch points, and quality_score.
+4. **Layer A result**: stdout/stderr from `.cc-boost/agent-check.sh` (already
    passed — your job is the semantic layer beyond it).
-4. (Optional) **Acceptance hints**: explicit success criteria.
+5. (Optional) **Acceptance hints**: explicit success criteria.
 
 ## Procedure
 
@@ -51,6 +54,9 @@ The orchestrator (the main Claude conversation, or `/cc-task`) will give you:
 3. For each test file in the diff, ask:
    - Is this test actually exercising the new behavior?
    - Or is it a tautology that would pass even if the implementation were empty?
+   If no tests changed, do not fail automatically. Treat it as a risk signal
+   unless the task explicitly required tests or the review packet marks the
+   diff as high risk with no other validation path.
 
 4. Use `Grep` to find call sites of any modified public API. Spot-check that
    the change doesn't break existing usage.
@@ -80,8 +86,7 @@ Emit a single JSON object as your final message — no prose around it. Schema:
 
 ## Verdict rules
 
-- `pass`: intent satisfied, no spotted regressions, tests genuinely exercise
-  the change.
+- `pass`: intent satisfied and no concrete regressions are spotted.
 - `fail`: missing[] or regressions[] is non-empty AND the issue is concrete
   (you can name a file or behavior).
 - `uncertain`: you couldn't determine without running the app, or the diff

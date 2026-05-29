@@ -7,8 +7,9 @@
 # Selection rule (in order):
 #   1. Exclude candidates that failed Layer A or verifier.
 #   2. Prefer verdict==pass over uncertain over skipped.
-#   3. Smallest diff_lines.
-#   4. Tie-break on verifier_score (highest).
+#   3. Highest deterministic quality_score.
+#   4. Smallest diff_lines.
+#   5. Tie-break on verifier_score (highest).
 #
 # Usage:
 #   cc-task-evaluate.sh --run-id=<id> [--no-verifier]
@@ -41,7 +42,7 @@ done
 cc_safe_run_id "$RUN_ID" || exit 2
 
 PROJECT_DIR="$(cc_project_dir)"
-RUN_DIR="$(cc_boost_dir)/worktrees/$RUN_ID"
+RUN_DIR="$(cc_worktrees_dir)/$RUN_ID"
 MANIFEST="$RUN_DIR/manifest.json"
 [[ -f "$MANIFEST" ]] || die_int "manifest not found: $MANIFEST (did setup run?)"
 
@@ -61,14 +62,14 @@ for i in $(seq 0 $((CAND_COUNT - 1))); do
   WT="$(jq -r ".candidates[$i].worktree" "$MANIFEST")"
   BRANCH="$(jq -r ".candidates[$i].branch" "$MANIFEST")"
 
-  # Layer A — run agent-check.sh inside the candidate worktree.
+  # Layer A — run .cc-boost/agent-check.sh inside the candidate worktree.
   LOG_FILE="$RUN_DIR/cand-$N.layer-a.log"
-  AC="$WT/scripts/agent-check.sh"
+  AC="$WT/.cc-boost/agent-check.sh"
   if [[ -x "$AC" ]]; then
     ( cd "$WT" && bash "$AC" ) > "$LOG_FILE" 2>&1
     LAYER_A_RC=$?
   else
-    echo "scripts/agent-check.sh missing in worktree" > "$LOG_FILE"
+    echo ".cc-boost/agent-check.sh missing in worktree" > "$LOG_FILE"
     LAYER_A_RC=127
   fi
   LAYER_A_PASS="false"; (( LAYER_A_RC == 0 )) && LAYER_A_PASS="true"
@@ -78,18 +79,7 @@ for i in $(seq 0 $((CAND_COUNT - 1))); do
   STAT_FILE="$RUN_DIR/cand-$N.numstat"
   (
     cd "$WT" || exit 0
-    UNTRACKED=()
-    while IFS= read -r -d '' path; do
-      UNTRACKED+=("$path")
-    done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
-    if (( ${#UNTRACKED[@]} > 0 )); then
-      git add -N -- "${UNTRACKED[@]}" 2>/dev/null || true
-    fi
-    git diff "$BASE_SHA" > "$DIFF_FILE" 2>/dev/null || true
-    git diff "$BASE_SHA" --numstat > "$STAT_FILE" 2>/dev/null || true
-    if (( ${#UNTRACKED[@]} > 0 )); then
-      git reset -q -- "${UNTRACKED[@]}" 2>/dev/null || true
-    fi
+    cc_git_diff_with_untracked "$BASE_SHA" "$DIFF_FILE" "$STAT_FILE"
   )
 
   # Diff stats.
@@ -104,12 +94,25 @@ for i in $(seq 0 $((CAND_COUNT - 1))); do
     done < "$STAT_FILE"
   fi
 
+  # Deterministic review packet — gives the selector and verifier repo-aware
+  # signals without asking candidates to self-report their quality.
+  EVIDENCE_FILE="$RUN_DIR/cand-$N.review-packet.json"
+  if ! CLAUDE_PROJECT_DIR="$WT" "$SCRIPT_DIR/review-packet.sh" --base="$BASE_SHA" --task-file="$TASK_FILE" --diff-file="$DIFF_FILE" > "$EVIDENCE_FILE" 2>/dev/null; then
+    echo '{"schema_version":1,"quality":{"risk":"unknown","reasons":["review packet failed"],"quality_score":0},"related_tests":[],"callsite_hints":[]}' > "$EVIDENCE_FILE"
+  fi
+  EVIDENCE_JSON="$(cat "$EVIDENCE_FILE" 2>/dev/null || echo '{}')"
+  if ! echo "$EVIDENCE_JSON" | jq -e . >/dev/null 2>&1; then
+    EVIDENCE_JSON='{"schema_version":1,"quality":{"risk":"unknown","reasons":["review packet invalid"],"quality_score":0},"related_tests":[],"callsite_hints":[]}'
+  fi
+  QUALITY_SCORE="$(echo "$EVIDENCE_JSON" | jq -r '.quality.quality_score // .quality_score // 0')"
+
   # Layer B — cross-family verifier.
   VERDICT="skipped"; SCORE="null"; VERDICT_JSON='{}'
   if (( NO_VERIFIER == 0 )) && [[ -s "$DIFF_FILE" ]]; then
     VERDICT_JSON="$("$SCRIPT_DIR/run-verifier.sh" \
       --task-file="$TASK_FILE" \
       --diff-file="$DIFF_FILE" \
+      --evidence-file="$EVIDENCE_FILE" \
       --layer-a-log="$LOG_FILE" 2>/dev/null || true)"
     if [[ -n "$VERDICT_JSON" ]]; then
       VERDICT="$(echo "$VERDICT_JSON" | jq -r '.verdict // "skipped"')"
@@ -127,9 +130,12 @@ for i in $(seq 0 $((CAND_COUNT - 1))); do
     --arg verdict "$VERDICT" \
     --argjson files "$DIFF_FILES" \
     --argjson lines "$DIFF_LINES" \
+    --argjson qscore "$QUALITY_SCORE" \
     --arg score "$SCORE" \
     --argjson vobj "${VERDICT_JSON:-{\}}" \
+    --argjson evidence "$EVIDENCE_JSON" \
     --arg diff "$DIFF_FILE" \
+    --arg evidence_file "$EVIDENCE_FILE" \
     --arg log "$LOG_FILE" \
     '. + [{
       n:$n, worktree:$wt, branch:$branch,
@@ -137,9 +143,12 @@ for i in $(seq 0 $((CAND_COUNT - 1))); do
       verdict:$verdict,
       diff_files:$files,
       diff_lines:$lines,
+      quality_score:$qscore,
       verifier_score:(if $score=="null" or $score=="" then null else ($score|tonumber? // null) end),
       verifier_full:$vobj,
+      quality_evidence:$evidence,
       diff_file:$diff,
+      evidence_file:$evidence_file,
       layer_a_log:$log
     }]')"
 done
@@ -151,8 +160,9 @@ WINNER_N="$(echo "$RANKING" | jq '
       (if .verdict == "pass" then 0
        elif .verdict == "uncertain" then 1
        else 2 end),                                            # rule 2
-      .diff_lines,                                             # rule 3
-      (- (.verifier_score // 0))                               # rule 4
+      (- (.quality_score // 0)),                               # rule 3
+      .diff_lines,                                             # rule 4
+      (- (.verifier_score // 0))                               # rule 5
     )
   | .[0].n // null
 ')"

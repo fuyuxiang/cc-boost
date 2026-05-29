@@ -15,5 +15,5 @@ if [[ -f justfile || -f Justfile ]]; then
   fi
 fi
 
-echo "::cc-boost::ok (no project type detected — edit scripts/agent-check.sh)"
+echo "::cc-boost::ok (no project type detected — edit .cc-boost/agent-check.sh)"
 exit 0

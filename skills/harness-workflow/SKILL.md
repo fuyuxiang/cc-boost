@@ -40,19 +40,23 @@ Make the smallest scoped edit. Hard rules:
 ## Step 4 — Verify (automatic)
 
 After every Edit/Write, the cc-boost PostToolUse hook runs
-`scripts/agent-check.sh`. If it fails, you will receive a structured
-failure summary as injected context. Your next action MUST be:
+`.cc-boost/agent-check.sh` and classifies the result against the captured
+baseline. If it reports a **new regression**, your next action MUST be:
 - Read only the files cited in `failure.files`.
 - Apply the smallest fix that addresses `failure.suggested_focus`.
 - Do not expand scope to "fix related issues."
+
+If it reports a known baseline failure, do not repair it unless the user
+asked or your diff touched the cited file.
 
 If the same failure recurs **twice in a row**, STOP patching. Step back
 and reconsider the approach. Tell the user what you are stuck on.
 
 ## Step 5 — Stop-gate (automatic)
 
-When you try to finalize, the Stop hook re-runs agent-check. If it fails,
-you cannot exit. Repair, then try to finalize again.
+When you try to finalize, the Stop hook re-runs agent-check. New regressions
+block finalization; known baseline failures are logged and released so the
+task does not expand into unrelated cleanup.
 
 ## Step 6 — Cross-model verify (manual; for non-trivial diffs)
 
@@ -64,6 +68,7 @@ detection that lifts weak-model accuracy).
 Pass the verifier:
 - The original task description (verbatim).
 - The output of `git diff --stat` and `git diff`.
+- The output of `scripts/review-packet.sh`.
 - The path or content of the latest agent-check log.
 
 If the verifier returns `verdict: fail`, fix the cited issue. If

@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "cc-boost",
   "displayName": "CC-Boost：弱模型编码加固框架",
-  "version": "0.1.0",
-  "description": "面向 Claude Code 的验证器门控加固框架。Layer A 在每次编辑后跑本地检查并把失败结构化回注；可选 Layer B 通过 HTTP 调用第二个模型族（MiniMax、GLM、Kimi、DeepSeek、Qwen 或 Anthropic）做跨族 verifier 与 Best-of-N 选优。免 key 即可安装运行。",
+  "version": "0.2.0",
+  "description": "面向 Claude Code 的质量闭环加固框架。Layer A 在每次编辑后跑本地检查，并通过 baseline 区分历史失败和新增回归；可选 Layer B 通过 HTTP 调用第二个模型族（MiniMax、GLM、Kimi、DeepSeek、Qwen 或 Anthropic）结合质量证据做跨族 verifier 与 Best-of-N 选优。免 key 即可安装运行。",
   "author": {
     "name": "cc-boost contributors",
     "url": "https://github.com/fuyuxiang/cc-boost"

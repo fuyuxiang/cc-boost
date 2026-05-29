@@ -4,9 +4,10 @@ description: How to read and respond to cc-boost structured failure summaries. A
 
 # Reading cc-boost failure summaries
 
-When agent-check fails, cc-boost's PostToolUse hook injects a structured
-JSON summary of the failure. Treat that JSON as your authoritative repair
-brief. This skill explains how to use each field.
+When agent-check fails, cc-boost's PostToolUse hook first compares the
+failure to the captured baseline. Treat only **new regression** summaries as
+authoritative repair briefs. Known baseline failures are context, not a
+request to clean up unrelated code.
 
 ## Failure schema
 
@@ -69,7 +70,7 @@ brief. This skill explains how to use each field.
 ## What gets logged
 
 Every failure (whether you fix it or not) is appended to
-`.cc-boost/failures.jsonl` and eventually compiled into project lessons.
+`.cc-boost/runtime/failures.jsonl` and eventually compiled into project lessons.
 This means: if you make the same kind of mistake repeatedly across
 sessions, future-you will see a lesson about it injected next time. So
 the cost of writing bad code now is paid by future-you. Write good code now.

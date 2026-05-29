@@ -1,5 +1,5 @@
 ---
-description: Best-of-N orchestrator. Runs N candidate-generator subagents in parallel (each in its own git worktree), then runs Layer A + cross-family verifier on each, picks the smallest verified diff, and applies it. Heavy lifting is in shell scripts; you only spawn the candidate Agents.
+description: Best-of-N orchestrator. Runs N candidate-generator subagents in parallel (each in its own git worktree), then runs Layer A + review packet + cross-family verifier on each, picks the best verified candidate, and applies it. Heavy lifting is in shell scripts; you only spawn the candidate Agents.
 allowed-tools: Bash, Read, Agent
 argument-hint: "<task description> [--n=2|3] [--budget=low|medium|high] [--no-verifier] [--keep-branch]"
 ---
@@ -65,7 +65,7 @@ Steps:
 2. Read <brief>.
 3. Read the relevant files; make the smallest patch that satisfies the task
    under your strategy hint.
-4. Run scripts/agent-check.sh from the worktree root before yielding.
+4. Run .cc-boost/agent-check.sh from the worktree root before yielding.
 5. Final message: emit the candidate JSON described in the cc-boost-candidate
    system prompt — nothing else.
 ```
@@ -80,22 +80,23 @@ all results after the parallel block).
   --run-id=<run_id> [--no-verifier]
 ```
 
-This runs Layer A in each worktree, runs the cross-family verifier (unless
-`--no-verifier`), and applies the deterministic selection rule. stdout is
-the evaluation JSON with `ranking` and `winner`.
+This runs Layer A in each worktree, collects a deterministic review packet,
+runs the cross-family verifier (unless `--no-verifier`), and applies the
+deterministic selection rule. stdout is the evaluation JSON with `ranking`
+and `winner`.
 
 The verifier is automatically skipped when `.cc-boost/config.json` has
 `verifier.enabled: false` (e.g. no second-family key configured). This is
 normal — every candidate's `verdict` will be `skipped`, and the selection
-rule degrades to "Layer A pass + smallest diff_lines". The run is still
-valid; just call this out in step 6 so the user knows verifier didn't
-contribute to the ranking.
+rule degrades to "Layer A pass + quality_score + smallest diff_lines". The
+run is still valid; just call this out in step 6 so the user knows verifier
+didn't contribute to the ranking.
 
 Exit code 2 means no acceptable winner (all candidates failed Layer A,
 failed verifier, or both). In that case, do NOT call
 apply — surface the ranking honestly so the user can decide. Show: each
-candidate's `verdict`, `layer_a_pass`, `diff_lines`, and the verifier's
-`reasoning` if present.
+candidate's `verdict`, `layer_a_pass`, `quality_score`, `diff_lines`, and
+the verifier's `reasoning` if present.
 
 ## Step 5 — Apply (shell)
 
@@ -127,18 +128,19 @@ cc-boost /cc-task summary
   Verifier: cross-family (glm-5)   # or "skipped (--no-verifier)"
                                    # or "skipped (verifier.enabled=false — set a non-Claude key to enable)"
 
-| Cand | Strategy hint     | Layer A | Verdict   | Diff lines |
-|------|-------------------|---------|-----------|------------|
-| 1    | direct            | ✓       | pass 0.91 | 7          |
-| 2    | second-most-likely| ✓       | uncertain | 34         |
+| Cand | Strategy hint      | Layer A | Verdict   | Quality | Diff lines |
+|------|--------------------|---------|-----------|---------|------------|
+| 1    | direct             | ✓       | pass 0.91 | 94      | 7          |
+| 2    | second-most-likely | ✓       | uncertain | 71      | 34         |
 
-Winner: cand-1 (smallest verified diff).
+Winner: cand-1 (best verified quality score, then smallest diff).
 Action: applied to working tree (uncommitted).
 ```
 
 When all rows show `skipped` because verifier is disabled, append a single
-line under the table: "Selection used Layer A pass + smallest diff only —
-configure a non-Claude provider key to enable cross-family verification."
+line under the table: "Selection used Layer A pass + deterministic quality
+score + smallest diff only — configure a non-Claude provider key to enable
+cross-family verification."
 
 Pull every column directly from the evaluation JSON; do not paraphrase.
 
@@ -148,7 +150,7 @@ Pull every column directly from the evaluation JSON; do not paraphrase.
   or because `verifier.enabled: false` in config), say so in step 6's report.
 - Never merge a candidate that the verifier rated `fail`.
 - Never run more than 3 parallel candidates without explicit `--budget=high`.
-- Never delete worktrees outside `.cc-boost/worktrees/<run-id>/` — the apply
+- Never delete worktrees outside `.cc-boost/runtime/worktrees/<run-id>/` — the apply
   script enforces this; do NOT add your own `rm -rf` calls.
 - If the user's working tree is dirty, the setup script refuses. Do not
   stash, reset, or otherwise mutate user state to "fix" this.

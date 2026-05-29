@@ -9,7 +9,7 @@ LIB_DIR="$(cd "$SCRIPT_DIR/../lib" && pwd)"
 source "$LIB_DIR/common.sh"
 
 RUN_ID="$(date -u +%Y-%m-%dT%H-%MZ)"
-ROOT="$(cc_boost_dir)/bench/$RUN_ID"
+ROOT="$(cc_bench_dir)/$RUN_ID"
 mkdir -p "$ROOT"
 
 # Task 1 — Python: off-by-one in a paginator.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pretty-print .cc-boost/failures.jsonl.
+# Pretty-print .cc-boost/runtime/failures.jsonl.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

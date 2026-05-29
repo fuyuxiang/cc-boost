@@ -24,7 +24,7 @@ fi
 if ! cc_enabled; then exit 0; fi
 
 PROJECT_DIR="$(cc_project_dir)"
-LESSONS_FILE="$(cc_boost_dir)/lessons.md"
+LESSONS_FILE="$(cc_lessons_path)"
 EXEC_MODEL="${CC_BOOST_EXECUTOR_MODEL:-unknown}"
 
 CONTEXT=""

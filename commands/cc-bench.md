@@ -12,7 +12,7 @@ provider stack — they shouldn't trust marketing benchmarks.
 ## Procedure
 
 1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/cc-bench-init.sh"`. This
-   prepares a temporary fixture repo under `.cc-boost/bench/<run-id>/`
+   prepares a temporary fixture repo under `.cc-boost/runtime/bench/<run-id>/`
    containing N small bug-fix tasks (default N=5). Each task has:
    - Buggy source files
    - A failing test
@@ -84,14 +84,14 @@ cc-boost /cc-bench results
 ```
 
 5. For each task that bare failed but harness OR bon solved, show the
-   failure that the harness caught (read from `.cc-boost/failures.jsonl`
+   failure that the harness caught (read from `.cc-boost/runtime/failures.jsonl`
    for the run-id). This is the user-facing proof that the verifier is
    doing work.
 
 ## Hard rules
 
 - Never run the bench against the user's real working tree. Use
-  `.cc-boost/bench/<run-id>/` exclusively.
+  `.cc-boost/runtime/bench/<run-id>/` exclusively.
 - After the run, leave the fixture in place but write a note at the bottom
   of the report: "Fixture preserved at <path>. Delete with `rm -rf` if
   not needed."

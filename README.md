@@ -23,7 +23,7 @@ claude
 > /cc-doctor
 ```
 
-`/cc-init` 会在当前项目生成 `scripts/agent-check.sh`、`.cc-boost/config.json`、失败账本和 `CLAUDE.md` 受控块。之后正常使用 Claude Code 即可；cc-boost 会在后台跑检查、记录失败，并在非平凡 diff 上调用 verifier。
+`/cc-init` 会在当前项目生成一个被整体 gitignore 的 `.cc-boost/` 目录，里面包含 `agent-check.sh`、配置、质量 baseline、失败账本、review packet 和本地规则快照。之后正常使用 Claude Code 即可；cc-boost 会在后台跑检查、区分历史失败和新增回归，并在非平凡 diff 上调用 verifier。
 
 无任何 provider key 也能装。`/cc-init` 在没有 key 时仍会完成初始化、启用 Layer A 的所有能力（本地检查、失败账本、lessons 注入、`/cc-task` 的候选生成），只把 Layer B 的跨模型 verifier 写成 disabled。后续配上 key 后运行 `/cc-budget --verifier=on` 解锁，再用 `/cc-doctor` 检查状态。
 
@@ -46,7 +46,7 @@ cc-boost 不参与 Claude Code 自身的执行模型链路——你怎么跑 Cla
 修复登录接口在 token 过期时返回 500 的问题
 ```
 
-这时已经启用：每次 `Edit` 后跑本地 agent-check、失败结构化注入回模型、`.cc-boost/failures.jsonl` 累积、`/cc-compile-lessons` 总结经验。`/cc-task` 也能创建候选并比较 diff 大小，只是不会跑跨模型 verifier。
+这时已经启用：每次 `Edit` 后跑本地 agent-check、按 `.cc-boost/runtime/baseline.json` 识别新增回归、`.cc-boost/runtime/failures.jsonl` 累积、`/cc-compile-lessons` 总结经验。`/cc-task` 也能创建候选并按 review packet + diff 大小排序，只是不会跑跨模型 verifier。
 
 ### 配 verifier key 解锁 Layer B（可选）
 
@@ -63,16 +63,24 @@ export ZAI_API_KEY=...        # 或 MINIMAX_API_KEY / MOONSHOT_API_KEY / DEEPSEE
 /cc-task 为 GET /users 增加 cursor pagination --n=2 --budget=medium
 ```
 
+质量档位：
+
+```text
+/cc-budget --mode=light    # 默认：只阻止本次新增回归
+/cc-budget --mode=quality  # 高风险任务：启用 verifier + 质量证据排序
+/cc-budget --mode=ci       # 发布前：不忽略 baseline，按全量 CI 门禁处理
+```
+
 ## 包含什么
 
 | 组件 | 类型 | 说明 |
 |---|---|---|
-| `/cc-init` | slash command | 检测项目、安装 `agent-check.sh`、写 `.cc-boost/config.json` 和 `CLAUDE.md` 受控块 |
+| `/cc-init` | slash command | 检测项目、安装 `.cc-boost/agent-check.sh`、写 `.cc-boost/config.json` 和本地规则快照 |
 | `/cc-doctor` | slash command | 检查 provider key、角色分配、hook、agent-check、账本状态 |
-| `/cc-task` | slash command | Best-of-N 编码任务；创建候选 worktree、并行跑 candidate、验证、选 winner、apply diff |
-| `/cc-budget` | slash command | 调整 N、verifier 开关、节流、预算档位 |
-| `/cc-ledger` | slash command | 查看 `.cc-boost/failures.jsonl` 的失败类型、模型分布和最近记录 |
-| `/cc-compile-lessons` | slash command | 把失败账本总结成 `.cc-boost/lessons.md`，后续 prompt 自动注入 |
+| `/cc-task` | slash command | Best-of-N 编码任务；创建候选 worktree、并行跑 candidate、收集质量证据、验证、选 winner、apply diff |
+| `/cc-budget` | slash command | 调整 quality mode、N、verifier 开关、节流、预算档位 |
+| `/cc-ledger` | slash command | 查看 `.cc-boost/runtime/failures.jsonl` 的失败类型、模型分布和最近记录 |
+| `/cc-compile-lessons` | slash command | 把失败账本总结成 `.cc-boost/runtime/lessons.md`，后续 prompt 自动注入 |
 | `/cc-bench` | slash command | 在本地 fixture 上比较 bare / harness / bon 三种模式 |
 | `cc-boost-verifier` | agent | 只读语义复核 Agent；用于 `/cc-task` 或人工验证场景 |
 | `cc-boost-candidate` | agent | `/cc-task` 的候选补丁生成器 |
@@ -80,22 +88,23 @@ export ZAI_API_KEY=...        # 或 MINIMAX_API_KEY / MOONSHOT_API_KEY / DEEPSEE
 | `harness-workflow` | skill | 编码任务的 7 步工作流：读文件、计划、小补丁、验证、final gate |
 | `failure-triage` | skill | 指导模型按结构化失败摘要修复 |
 | `small-patch` | skill | 控制 diff 大小，避免顺手重构 |
-| `PostToolUse` hook | hook | 编辑后运行 Layer A：`scripts/agent-check.sh` |
-| `Stop` hook | hook | 结束前重跑 Layer A，并对非平凡 diff 运行 Layer B verifier |
-| `UserPromptSubmit` hook | hook | 注入 `.cc-boost/lessons.md` 中与当前模型相关的项目经验 |
+| `PreToolUse` hook | hook | 编辑前阻止大范围覆盖式写入和高风险锁文件改动 |
+| `PostToolUse` hook | hook | 编辑后运行 Layer A：`.cc-boost/agent-check.sh`，并按 baseline 区分新增回归 |
+| `Stop` hook | hook | 结束前重跑 Layer A；只阻止新增回归，并对非平凡 diff 运行 Layer B verifier |
+| `UserPromptSubmit` hook | hook | 注入 `.cc-boost/runtime/lessons.md` 中与当前模型相关的项目经验 |
 | `SessionStart` hook | hook | 注入 cc-boost 运行规则和当前角色配置 |
 
 ## 工作原理
 
-### 1. Layer A：确定性检查
+### 1. Layer A：baseline + regression gate
 
 每次 `Edit`、`Write`、`MultiEdit` 或 `NotebookEdit` 后，`scripts/verify-after-edit.sh` 会运行业务项目里的：
 
 ```bash
-scripts/agent-check.sh
+.cc-boost/agent-check.sh
 ```
 
-默认模板覆盖 Node、Python、Go、Rust 和 generic 项目。失败时，`scripts/summarize-failure.sh` 会把原始日志压缩成结构化 JSON：
+默认模板覆盖 Node、Python、Go、Rust 和 generic 项目。`/cc-init` 会先运行 `scripts/baseline-capture.sh` 记录当前仓库健康状态。之后失败时，`scripts/summarize-failure.sh` 会把原始日志压缩成结构化 JSON：
 
 ```json
 {
@@ -108,7 +117,7 @@ scripts/agent-check.sh
 }
 ```
 
-这条记录会追加到 `.cc-boost/failures.jsonl`，并作为 `additionalContext` 注入回 Claude，让模型按失败摘要做最小修复。
+这条记录会追加到 `.cc-boost/runtime/failures.jsonl`。如果它匹配 baseline 且没有触碰失败文件，cc-boost 会放行并提醒模型不要扩大 scope；如果是新增回归，则作为 `additionalContext` 注入回 Claude，让模型按失败摘要做最小修复。
 
 ### 2. Layer B：跨模型 verifier
 
@@ -117,6 +126,7 @@ scripts/agent-check.sh
 ```text
 Layer A 通过
   -> scripts/diff-classify.sh 判断 diff 是否非平凡
+  -> scripts/review-packet.sh 收集风险、scope、测试、调用点、依赖、API 证据
   -> 命中 diff hash 缓存则放行
   -> scripts/run-verifier.sh 直调 verifier provider API
   -> verdict=pass      放行并缓存
@@ -132,7 +142,7 @@ Layer A 通过
 | `openai_chat` | MiniMax、Z.ai/GLM、Moonshot/Kimi、DeepSeek、DashScope/Qwen |
 | `anthropic_messages` | Anthropic Claude |
 
-Stop gate 直接按 `.cc-boost/config.json` 里的 `verifier.provider` 和 `verifier.model` 通过 HTTP 调用 verifier，绕开 subagent 的 `model: inherit` 限制。要做到真正跨模型，必须配置不同模型族的 verifier API key。
+Stop gate 直接按 `.cc-boost/config.json` 里的 `verifier.provider` 和 `verifier.model` 通过 HTTP 调用 verifier，绕开 subagent 的 `model: inherit` 限制。verifier 会同时读取 task、diff、Layer A 日志和 deterministic review packet。要做到真正跨模型，必须配置不同模型族的 verifier API key。
 
 ### 3. `/cc-task`：Best-of-N 选最优
 
@@ -141,7 +151,7 @@ Stop gate 直接按 `.cc-boost/config.json` 里的 `verifier.provider` 和 `veri
 ```text
 cc-task-setup.sh
   -> 校验 git 工作区干净
-  -> 创建 .cc-boost/worktrees/<run-id>/cand-N
+  -> 创建 .cc-boost/runtime/worktrees/<run-id>/cand-N
   -> 写每个候选 brief
 
 cc-boost-candidate agents
@@ -149,8 +159,9 @@ cc-boost-candidate agents
 
 cc-task-evaluate.sh
   -> 每个候选跑 agent-check
+  -> 每个候选收集 review-packet
   -> 每个候选跑 verifier
-  -> 按 verdict、Layer A、diff_lines、score 排名
+  -> 按 verdict、Layer A、quality_score、diff_lines、score 排名
 
 cc-task-apply.sh
   -> 3-way apply winner diff
@@ -161,21 +172,22 @@ cc-task-apply.sh
 
 1. 排除 Layer A 失败或 `verdict == "fail"` 的候选。
 2. 优先 `pass`，其次 `uncertain`，最后 `skipped`。
-3. 同档里选 `diff_lines` 最小。
-4. 再用 verifier score 打破平局。
+3. 同档里选 deterministic `quality_score` 最高。
+4. 再选 `diff_lines` 最小。
+5. 再用 verifier score 打破平局。
 
 ### 4. 失败账本与 lessons
 
 所有 Layer A、final gate、verifier 和 Best-of-N 事件都会写入：
 
 ```text
-.cc-boost/failures.jsonl
+.cc-boost/runtime/failures.jsonl
 ```
 
 `/cc-compile-lessons` 会调用 `cc-boost-lesson-compiler`，把重复失败聚类成：
 
 ```text
-.cc-boost/lessons.md
+.cc-boost/runtime/lessons.md
 ```
 
 `scripts/inject-lessons.sh` 会在后续 prompt 中只注入 `## all` 和当前 executor 模型对应章节，避免上下文膨胀。
@@ -228,6 +240,12 @@ cc-task-apply.sh
   "final_gate": {
     "max_blocks": 3
   },
+  "quality": {
+    "mode": "light",
+    "regression_only": true,
+    "preflight": true,
+    "full_check_risk": "high"
+  },
   "best_of_n": {
     "default_n": 2,
     "budget": "medium"
@@ -271,22 +289,24 @@ export CC_BOOST_ZAI_BASE_URL=https://my-zai-proxy.local/api/paas/v4
 `/cc-init` 会在业务项目写入：
 
 ```text
-scripts/agent-check.sh
 .cc-boost/config.json
-.cc-boost/failures.jsonl
-.cc-boost/lessons.md
-.cc-boost/state/
-CLAUDE.md 的 cc-boost 受控块
-.gitignore 中的 .cc-boost/state/、.cc-boost/worktrees/、.cc-boost/bench/
+.cc-boost/agent-check.sh
+.cc-boost/CLAUDE.md
+.cc-boost/runtime/baseline.json
+.cc-boost/runtime/failures.jsonl
+.cc-boost/runtime/lessons.md
+.cc-boost/runtime/state/
+.cc-boost/runtime/review-packets/
+.gitignore 中的 .cc-boost/
 ```
 
 `/cc-task` 运行时还会创建：
 
 ```text
-.cc-boost/worktrees/<run-id>/
+.cc-boost/runtime/worktrees/<run-id>/
 ```
 
-`state/` 和 `worktrees/` 是运行时产物；`failures.jsonl` 和 `lessons.md` 是团队可共享资产。
+整个 `.cc-boost/` 默认作为本地 harness 状态忽略，不进入业务 git diff。`failures.jsonl`、`lessons.md`、review packet 和 verifier 响应都可能包含内部路径、日志或业务术语，默认不提交；团队需要共享时应显式导出。
 
 ## 命令速查
 
@@ -326,8 +346,14 @@ cc-boost/
     failure-triage/SKILL.md
     small-patch/SKILL.md
   scripts/
+    preflight-guard.sh
     verify-after-edit.sh
     final-gate.sh
+    baseline-capture.sh
+    classify-failure.sh
+    failure-fingerprint.sh
+    quality-evidence.sh
+    review-packet.sh
     run-verifier.sh
     diff-classify.sh
     cc-task-setup.sh
@@ -360,18 +386,18 @@ cc-boost/
 
 cc-boost 会执行真实操作，不仅仅修改提示词。它会：
 
-- 运行 `scripts/agent-check.sh`。
-- 写入 `.cc-boost/state/*`。
-- 失败时追加 `.cc-boost/failures.jsonl`。
+- 运行 `.cc-boost/agent-check.sh`。
+- 写入 `.cc-boost/runtime/*`。
+- 失败时追加 `.cc-boost/runtime/failures.jsonl`。
 - Stop 阶段可能阻止 Claude Code 结束回答。
 - `/cc-task` 会创建 git worktree 和临时分支，并在 winner 选出后 apply diff。
 
 安全边界：
 
 - `/cc-task` 要求用户工作区干净，不自动 stash 或 reset。
-- `lib/safety.sh` 校验 run-id、路径和分支命名，限制 cleanup 只能发生在 `.cc-boost/worktrees/<run-id>/`。
+- `lib/safety.sh` 校验 run-id、路径和分支命名，限制 cleanup 只能发生在 `.cc-boost/runtime/worktrees/<run-id>/`。
 - verifier API 故障不会阻死会话；只会提示用户运行 `/cc-doctor`。
-- 真正副作用大小取决于你项目的 `scripts/agent-check.sh` 做了什么。请确保测试命令幂等，且不会污染外部资源。
+- 真正副作用大小取决于你项目的 `.cc-boost/agent-check.sh` 做了什么。请确保测试命令幂等，且不会污染外部资源。
 
 ## 当前边界
 

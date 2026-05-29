@@ -12,6 +12,7 @@ source "$LIB_DIR/registry.sh"
 PROJECT_DIR="$(cc_project_dir)"
 CFG="$(cc_config_path)"
 LEDGER="$(cc_failures_path)"
+BASELINE="$(cc_baseline_path)"
 AGENT_CHECK="$(cc_agent_check)"
 
 cfg_ok="false"; cfg_err=""
@@ -30,7 +31,7 @@ if [[ -x "$AGENT_CHECK" ]]; then
   ac_ok="true"
 else
   if [[ -f "$AGENT_CHECK" ]]; then
-    ac_err="存在但不可执行 —— chmod +x scripts/agent-check.sh"
+    ac_err="存在但不可执行 —— chmod +x .cc-boost/agent-check.sh"
   else
     ac_err="缺失 —— 请运行 /cc-init"
   fi
@@ -60,15 +61,36 @@ if [[ "$cfg_ok" == "true" ]]; then
   cfg_ver_model="$(jq -r '.verifier.model // ""' "$CFG" 2>/dev/null)"
 fi
 
+quality_mode="light"
+quality_regression_only="true"
+quality_preflight="true"
+if [[ "$cfg_ok" == "true" ]]; then
+  quality_mode="$(jq -r '.quality.mode // "light"' "$CFG" 2>/dev/null)"
+  quality_regression_only="$(jq -r '.quality.regression_only // true' "$CFG" 2>/dev/null)"
+  quality_preflight="$(jq -r '.quality.preflight // true' "$CFG" 2>/dev/null)"
+fi
+
+baseline_ok="false"; baseline_err=""
+if [[ -f "$BASELINE" ]]; then
+  if jq -e . "$BASELINE" >/dev/null 2>&1; then
+    baseline_ok="true"
+  else
+    baseline_err="baseline.json 存在但不是合法 JSON"
+  fi
+else
+  baseline_err="未找到 —— 请运行 /cc-init 或 scripts/baseline-capture.sh"
+fi
+
 # Hook + script presence. Hooks come from the plugin install but we still
 # check the file presence — a corrupt install or chmod glitch is the kind
 # of thing /cc-doctor exists to catch.
 hooks_ok="true"; hook_err=""
 for f in \
+    preflight-guard.sh \
     verify-after-edit.sh final-gate.sh inject-lessons.sh session-bootstrap.sh \
-    diff-classify.sh run-verifier.sh \
+    diff-classify.sh quality-evidence.sh review-packet.sh run-verifier.sh \
     cc-task-setup.sh cc-task-evaluate.sh cc-task-apply.sh \
-    summarize-failure.sh; do
+    baseline-capture.sh classify-failure.sh failure-fingerprint.sh summarize-failure.sh; do
   [[ -x "$SCRIPT_DIR/$f" ]] || { hooks_ok="false"; hook_err="$f 缺失或不可执行"; break; }
 done
 
@@ -132,7 +154,11 @@ jq -n \
   --arg cfg_ok "$cfg_ok" --arg cfg_err "$cfg_err" \
   --arg ac_ok "$ac_ok"   --arg ac_err "$ac_err" \
   --arg hooks_ok "$hooks_ok" --arg hook_err "$hook_err" \
+  --arg baseline_ok "$baseline_ok" --arg baseline_err "$baseline_err" \
   --arg git_ok "$git_ok" --arg git_err "$git_err" \
+  --arg quality_mode "$quality_mode" \
+  --arg quality_regression_only "$quality_regression_only" \
+  --arg quality_preflight "$quality_preflight" \
   --argjson ledger_count "$ledger_count" \
   --arg xfamily "$configured_xfamily" \
   --arg available_xfamily "$available_xfamily" \
@@ -140,6 +166,8 @@ jq -n \
     config:   {ok:($cfg_ok=="true"), error:$cfg_err},
     agent_check: {ok:($ac_ok=="true"), error:$ac_err},
     hooks:    {ok:($hooks_ok=="true"), error:$hook_err},
+    baseline: {ok:($baseline_ok=="true"), error:$baseline_err},
+    quality:  {mode:$quality_mode, regression_only:($quality_regression_only=="true"), preflight:($quality_preflight=="true")},
     git_repo: {ok:($git_ok=="true"), error:$git_err},
     ledger:   {entries:$ledger_count},
     cross_family_verifier: ($xfamily=="true"),

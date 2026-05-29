@@ -13,15 +13,51 @@ cc_boost_dir() {
   echo "$(cc_project_dir)/.cc-boost"
 }
 
+cc_runtime_dir() {
+  local d
+  d="$(cc_boost_dir)/runtime"
+  mkdir -p "$d" 2>/dev/null || true
+  echo "$d"
+}
+
 cc_state_dir() {
   local d
-  d="$(cc_boost_dir)/state"
+  d="$(cc_runtime_dir)/state"
   mkdir -p "$d" 2>/dev/null || true
   echo "$d"
 }
 
 cc_failures_path() {
-  echo "$(cc_boost_dir)/failures.jsonl"
+  echo "$(cc_runtime_dir)/failures.jsonl"
+}
+
+cc_lessons_path() {
+  echo "$(cc_runtime_dir)/lessons.md"
+}
+
+cc_baseline_path() {
+  echo "$(cc_runtime_dir)/baseline.json"
+}
+
+cc_worktrees_dir() {
+  local d
+  d="$(cc_runtime_dir)/worktrees"
+  mkdir -p "$d" 2>/dev/null || true
+  echo "$d"
+}
+
+cc_bench_dir() {
+  local d
+  d="$(cc_runtime_dir)/bench"
+  mkdir -p "$d" 2>/dev/null || true
+  echo "$d"
+}
+
+cc_review_packets_dir() {
+  local d
+  d="$(cc_runtime_dir)/review-packets"
+  mkdir -p "$d" 2>/dev/null || true
+  echo "$d"
 }
 
 cc_config_path() {
@@ -118,7 +154,7 @@ cc_detect_project() {
 # Path to the project's agent-check script. We never overwrite the user's
 # script — cc-init copies a template if one is missing.
 cc_agent_check() {
-  echo "$(cc_project_dir)/scripts/agent-check.sh"
+  echo "$(cc_boost_dir)/agent-check.sh"
 }
 
 # Run agent-check and capture stdout+stderr separately.
@@ -128,8 +164,35 @@ cc_run_agent_check() {
   local script
   script="$(cc_agent_check)"
   if [[ ! -x "$script" ]]; then
-    echo "cc-boost: agent-check.sh missing or not executable" > "$outfile"
+    echo "cc-boost: .cc-boost/agent-check.sh missing or not executable" > "$outfile"
     return 127
   fi
   ( cd "$(cc_project_dir)" && bash "$script" ) > "$outfile" 2>&1
+}
+
+# Capture a git diff without mutating the index. Untracked files are appended
+# as /dev/null diffs and numstat additions so hooks can inspect new files
+# without `git add -N`.
+cc_git_diff_with_untracked() {
+  local base="${1:-HEAD}"
+  local diff_file="$2"
+  local stat_file="${3:-}"
+
+  : > "$diff_file"
+  git diff "$base" >> "$diff_file" 2>/dev/null || true
+
+  if [[ -n "$stat_file" ]]; then
+    : > "$stat_file"
+    git diff "$base" --numstat >> "$stat_file" 2>/dev/null || true
+  fi
+
+  while IFS= read -r path; do
+    [[ -z "$path" || ! -f "$path" ]] && continue
+    git diff --no-index -- /dev/null "$path" >> "$diff_file" 2>/dev/null || true
+    if [[ -n "$stat_file" ]]; then
+      local lines
+      lines="$(wc -l < "$path" 2>/dev/null | tr -d ' ' || echo 0)"
+      printf '%s\t0\t%s\n' "$lines" "$path" >> "$stat_file"
+    fi
+  done < <(git ls-files --others --exclude-standard 2>/dev/null | grep -vE '^\.cc-boost(/|$)' || true)
 }

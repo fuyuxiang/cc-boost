@@ -56,6 +56,27 @@ cc_run_agent_check "$LOG_FILE"
 RC=$?
 
 if (( RC != 0 )); then
+  CLASSIFICATION_JSON="$("$SCRIPT_DIR/classify-failure.sh" "$LOG_FILE")"
+  STATUS="$(echo "$CLASSIFICATION_JSON" | jq -r '.status // "regression"')"
+  SUMMARY_JSON="$(echo "$CLASSIFICATION_JSON" | jq -c '.summary // {}')"
+  TS="$(date -u +%FT%TZ)"
+
+  if [[ "$STATUS" == "baseline" ]]; then
+    LEDGER_LINE="$(jq -n \
+      --arg ts "$TS" \
+      --arg phase "final-gate" \
+      --arg status "$STATUS" \
+      --argjson classified "$CLASSIFICATION_JSON" \
+      --arg model "${CC_BOOST_EXECUTOR_MODEL:-unknown}" \
+      '{ts:$ts, phase:$phase, status:$status, executor_model:$model,
+        failure:($classified.summary // {}), classification:$classified}')"
+    cc_append_jsonl "$(cc_failures_path)" "$LEDGER_LINE"
+    rm -f "$BLOCKS_FILE" 2>/dev/null || true
+    jq -n --arg msg "[cc-boost] Final gate saw only known baseline failures. Releasing stop; no new regression detected." \
+      '{systemMessage:$msg, suppressOutput:true}'
+    exit 0
+  fi
+
   # Layer A failed — block stop unless we've hit max_blocks.
   BLOCKS=$((BLOCKS + 1))
   echo "$BLOCKS" > "$BLOCKS_FILE"
@@ -67,15 +88,15 @@ if (( RC != 0 )); then
     exit 0
   fi
 
-  SUMMARY_JSON="$("$SCRIPT_DIR/summarize-failure.sh" "$LOG_FILE")"
-  TS="$(date -u +%FT%TZ)"
   LEDGER_LINE="$(jq -n \
     --arg ts "$TS" \
     --arg phase "final-gate" \
+    --arg status "$STATUS" \
     --arg blocks "$BLOCKS" \
-    --argjson failure "$SUMMARY_JSON" \
+    --argjson classified "$CLASSIFICATION_JSON" \
     --arg model "${CC_BOOST_EXECUTOR_MODEL:-unknown}" \
-    '{ts:$ts, phase:$phase, stop_blocks:($blocks|tonumber), executor_model:$model, failure:$failure}')"
+    '{ts:$ts, phase:$phase, status:$status, stop_blocks:($blocks|tonumber),
+      executor_model:$model, failure:($classified.summary // {}), classification:$classified}')"
   cc_append_jsonl "$(cc_failures_path)" "$LEDGER_LINE"
 
   REASON=$(cat <<EOF
@@ -115,7 +136,7 @@ if [[ "$TRIVIAL" == "true" || -z "$DIFF_HASH" ]]; then
 fi
 
 # Verifier cache — skip if we've already passed this exact diff.
-CACHE_FILE="$(cc_boost_dir)/state/verifications.jsonl"
+CACHE_FILE="$(cc_state_dir)/verifications.jsonl"
 mkdir -p "$(dirname "$CACHE_FILE")" 2>/dev/null || true
 TTL_DAYS="$(cc_cfg verifier.cache_ttl_days 7)"
 if [[ -f "$CACHE_FILE" ]]; then
@@ -131,24 +152,20 @@ fi
 # Build inputs for run-verifier.sh.
 TASK_FILE="$STATE_DIR/last-prompt.txt"
 DIFF_FILE="$STATE_DIR/final-diff.patch"
+EVIDENCE_FILE="$(cc_review_packets_dir)/final-review-packet.json"
 (
   cd "$PROJECT_DIR" || exit 0
-  UNTRACKED=()
-  while IFS= read -r -d '' path; do
-    UNTRACKED+=("$path")
-  done < <(git ls-files --others --exclude-standard -z 2>/dev/null || true)
-  if (( ${#UNTRACKED[@]} > 0 )); then
-    git add -N -- "${UNTRACKED[@]}" 2>/dev/null || true
-  fi
-  git diff HEAD > "$DIFF_FILE" 2>/dev/null || true
-  if (( ${#UNTRACKED[@]} > 0 )); then
-    git reset -q -- "${UNTRACKED[@]}" 2>/dev/null || true
-  fi
+  cc_git_diff_with_untracked HEAD "$DIFF_FILE"
 )
 
 if [[ ! -s "$DIFF_FILE" ]]; then
   exit 0  # nothing to verify
 fi
+
+"$SCRIPT_DIR/review-packet.sh" \
+  --task-file="$TASK_FILE" \
+  --diff-file="$DIFF_FILE" \
+  > "$EVIDENCE_FILE" 2>/dev/null || true
 
 # If no task description was captured, fall back to a placeholder so verifier
 # still has something to ground its judgment on (it'll lean on the diff).
@@ -159,6 +176,7 @@ fi
 VERDICT_JSON="$("$SCRIPT_DIR/run-verifier.sh" \
   --task-file="$TASK_FILE" \
   --diff-file="$DIFF_FILE" \
+  --evidence-file="$EVIDENCE_FILE" \
   --layer-a-log="$LOG_FILE" 2>/dev/null)"
 RVRC=$?
 

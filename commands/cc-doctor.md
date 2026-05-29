@@ -14,13 +14,15 @@ You are running cc-boost's `/cc-doctor`. Print a health report.
    - Resolved role assignment (executor, verifier, summarizer, fallback, longctx)
    - The verifier's resolved HTTP endpoint (provider, protocol, base_url, env)
      and whether the API key for it is present
-   - Whether `scripts/agent-check.sh` exists and is executable
+   - Whether `.cc-boost/agent-check.sh` exists and is executable
    - Whether `.cc-boost/config.json` exists and is parseable
+   - Whether `.cc-boost/runtime/baseline.json` exists and is parseable
+   - The active quality mode (`quality.mode`, `regression_only`, `preflight`)
    - The verifier currently configured in `.cc-boost/config.json`
    - Whether the project is a git repo (required by /cc-task and the verifier)
    - Whether the failure ledger is writable
    - Whether all plugin-side scripts exist (hooks + cc-task helpers + verifier)
-   - The size of `.cc-boost/failures.jsonl` and number of entries
+   - The size of `.cc-boost/runtime/failures.jsonl` and number of entries
 
 2. Translate the JSON into a human-readable status block. For each role, show
    `id (provider)` plus a tick or cross. Cross-family verifier should be
@@ -40,9 +42,9 @@ You are running cc-boost's `/cc-doctor`. Print a health report.
      missing, the endpoint can't be resolved, or the configured verifier is not
      cross-family. THIS is an error.
 
-3. If any structural step is broken (`config`, `agent_check`, `hooks`,
+3. If any structural step is broken (`config`, `baseline`, `agent_check`, `hooks`,
    `git_repo`), print the single command the user should run to fix it
-   (e.g. `chmod +x scripts/agent-check.sh`, `/cc-init --force`, `git init`).
+   (e.g. `chmod +x .cc-boost/agent-check.sh`, `/cc-init --force`, `git init`).
    A missing verifier key is not a broken state when `verifier.enabled=false`.
    Surface it as the neutral info line described above, not as a fix-me error.
 

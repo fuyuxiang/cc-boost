@@ -13,6 +13,7 @@
 #   run-verifier.sh \
 #     --task-file <path>     (required; user's task description)
 #     --diff-file <path>     (required; git diff to review)
+#     --evidence-file <path> (optional; deterministic review packet JSON)
 #     --layer-a-log <path>   (optional; deterministic check log)
 #
 # Exit codes:
@@ -50,11 +51,13 @@ emit_internal() {
 
 TASK_FILE=""
 DIFF_FILE=""
+EVIDENCE_FILE=""
 LAYER_A_LOG=""
 for arg in "$@"; do
   case "$arg" in
     --task-file=*)   TASK_FILE="${arg#--task-file=}" ;;
     --diff-file=*)   DIFF_FILE="${arg#--diff-file=}" ;;
+    --evidence-file=*) EVIDENCE_FILE="${arg#--evidence-file=}" ;;
     --layer-a-log=*) LAYER_A_LOG="${arg#--layer-a-log=}" ;;
   esac
 done
@@ -98,6 +101,8 @@ trim_to() {
 
 TASK_TXT="$(trim_to "$TASK_FILE" 4000)"
 DIFF_TXT="$(trim_to "$DIFF_FILE" 12000)"
+EVIDENCE_TXT=""
+[[ -n "$EVIDENCE_FILE" && -f "$EVIDENCE_FILE" ]] && EVIDENCE_TXT="$(trim_to "$EVIDENCE_FILE" 4000)"
 LAYER_A_TXT=""
 [[ -n "$LAYER_A_LOG" && -f "$LAYER_A_LOG" ]] && LAYER_A_TXT="$(trim_to "$LAYER_A_LOG" 2000)"
 
@@ -107,17 +112,21 @@ Output: a single JSON object — no prose, no code fences. Schema:
 {"verdict":"pass"|"fail"|"uncertain","score":0.0-1.0,"missing":[],"regressions":[],"test_quality":"good"|"weak"|"absent","smallest_repair":"","reasoning":""}
 
 Rules:
-- pass = intent satisfied, no spotted regressions, tests genuinely exercise the change.
+- pass = intent satisfied and no concrete regressions are spotted.
 - fail = missing[] or regressions[] is non-empty AND concrete (name a file or behavior).
 - uncertain = you genuinely cannot tell from the diff alone. Do not default to uncertain to be safe.
+- test_quality is a risk signal, not an automatic fail unless the task explicitly required tests or the evidence shows a high-risk change with no validation path.
+- Use the review packet to ground your judgment in risk, related tests, callsite hints, and scope evidence.
+- Penalize scope creep, dependency churn, generated-file edits, and public API changes that are not required by the task.
 - reasoning: 2-4 sentences.
 - Emit JSON only.'
 
 USER_PROMPT="$(jq -n \
   --arg task "$TASK_TXT" \
   --arg diff "$DIFF_TXT" \
+  --arg evidence "$EVIDENCE_TXT" \
   --arg log "$LAYER_A_TXT" \
-  '"## Task\n\n" + $task + "\n\n## Diff (git diff HEAD)\n\n```diff\n" + $diff + "\n```\n\n## Layer A check log\n\n```\n" + (if $log == "" then "(none)" else $log end) + "\n```\n\nReturn only the verdict JSON."' \
+  '"## Task\n\n" + $task + "\n\n## Diff (git diff HEAD)\n\n```diff\n" + $diff + "\n```\n\n## Deterministic review packet\n\n```json\n" + (if $evidence == "" then "{}" else $evidence end) + "\n```\n\n## Layer A check log\n\n```\n" + (if $log == "" then "(none)" else $log end) + "\n```\n\nReturn only the verdict JSON."' \
   -r 2>/dev/null)"
 
 [[ -n "$USER_PROMPT" ]] || emit_internal "failed to build user prompt"

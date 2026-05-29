@@ -1,6 +1,6 @@
 ---
 name: cc-boost-lesson-compiler
-description: Compiles entries in .cc-boost/failures.jsonl into a short, actionable lessons.md grouped by executor model. Invoked by /cc-compile-lessons periodically. Read-only on source; writes only .cc-boost/lessons.md.
+description: Compiles entries in .cc-boost/runtime/failures.jsonl into a short, actionable lessons.md grouped by executor model. Invoked by /cc-compile-lessons periodically. Read-only on source; writes only .cc-boost/runtime/lessons.md.
 model: inherit
 effort: low
 maxTurns: 4
@@ -14,7 +14,7 @@ concise, actionable rules file.
 ## Input
 
 You will be invoked with a payload containing the contents of
-`.cc-boost/failures.jsonl` (each line is one failure event). The orchestrator
+`.cc-boost/runtime/failures.jsonl` (each line is one failure event). The orchestrator
 will hand you the file content; you do NOT need to run `cat`.
 
 Each entry has the shape:
@@ -53,14 +53,14 @@ Each entry has the shape:
 
 ## Output format
 
-Emit the entire content of `.cc-boost/lessons.md`. The orchestrator will
+Emit the entire content of `.cc-boost/runtime/lessons.md`. The orchestrator will
 write it. Schema:
 
 ```markdown
 # Project Lessons (compiled by cc-boost)
 
 Last compiled: <ISO timestamp>
-Source: .cc-boost/failures.jsonl (N entries, M after dedup)
+Source: .cc-boost/runtime/failures.jsonl (N entries, M after dedup)
 
 ## all
 

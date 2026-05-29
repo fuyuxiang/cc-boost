@@ -67,7 +67,7 @@ BASE_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 
 BASE_SHA="$(git rev-parse HEAD)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(cc_hash "$TASK")"
-RUN_DIR="$(cc_boost_dir)/worktrees/$RUN_ID"
+RUN_DIR="$(cc_worktrees_dir)/$RUN_ID"
 mkdir -p "$RUN_DIR" || die_int "cannot create $RUN_DIR"
 
 # Per-candidate strategy hints. Diversity matters — see arXiv 2605.14163.
@@ -92,6 +92,13 @@ for i in $(seq 1 "$N"); do
     die_int "git worktree add failed for cand-$i"
   fi
 
+  mkdir -p "$WT_PATH/.cc-boost" || die_int "cannot create candidate .cc-boost dir"
+  if [[ -x "$(cc_agent_check)" ]]; then
+    cp "$(cc_agent_check)" "$WT_PATH/.cc-boost/agent-check.sh" \
+      || die_int "cannot copy agent-check.sh into cand-$i"
+    chmod +x "$WT_PATH/.cc-boost/agent-check.sh" 2>/dev/null || true
+  fi
+
   STRATEGY="$(strategy_for "$i")"
 
   # Brief: what the candidate agent will read.
@@ -114,7 +121,7 @@ $WT_PATH (already checked out on branch $BRANCH from base $BASE_BRANCH @ ${BASE_
 
 - Do NOT push, commit-amend, or modify any branch other than $BRANCH.
 - Do NOT modify files outside the task's stated scope.
-- Run \`scripts/agent-check.sh\` before yielding. If it fails, document the
+- Run \`.cc-boost/agent-check.sh\` before yielding. If it fails, document the
   remaining failure in your final JSON instead of declaring success.
 - Final message: emit ONLY the JSON object specified in the candidate
   agent's system prompt — no prose around it.

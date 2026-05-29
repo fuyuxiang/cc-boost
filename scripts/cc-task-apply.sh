@@ -10,7 +10,7 @@
 #                    Cleanup of losers still happens.
 #
 # Cleanup safety:
-#   We only ever remove worktrees under .cc-boost/worktrees/<run-id>/, never
+#   We only ever remove worktrees under .cc-boost/runtime/worktrees/<run-id>/, never
 #   anywhere else. Branches removed must match the cc-boost/<run-id>/cand-*
 #   pattern. This bounds blast radius if a user manually pokes around inside
 #   a cc-boost worktree dir.
@@ -47,13 +47,13 @@ cc_safe_run_id "$RUN_ID" || exit 2
 [[ "$MODE" == "apply" || "$MODE" == "keep-branch" ]] || die_pre "mode must be apply|keep-branch"
 
 PROJECT_DIR="$(cc_project_dir)"
-RUN_DIR="$(cc_boost_dir)/worktrees/$RUN_ID"
+RUN_DIR="$(cc_worktrees_dir)/$RUN_ID"
 MANIFEST="$RUN_DIR/manifest.json"
 EVAL="$RUN_DIR/evaluation.json"
 
 # Defense-in-depth: even with a valid format, confirm the resolved path is
 # under the cc-boost worktrees root before doing anything.
-WT_ROOT="$(cc_boost_dir)/worktrees"
+WT_ROOT="$(cc_worktrees_dir)"
 mkdir -p "$WT_ROOT"
 cc_safe_path_under "$RUN_DIR" "$WT_ROOT" || exit 2
 
